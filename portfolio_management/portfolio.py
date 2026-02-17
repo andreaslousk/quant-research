@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from pathlib import Path
 
@@ -310,8 +310,13 @@ class Portfolio:
         mean_return = np.mean(daily_return)
         std_return = np.std(daily_return)
 
+        max_dd, max_dd_start, max_dd_end = self._calculate_max_drawdown(self.nav_history)
+
         return {
             'pnl' : pnl/self.initial_cash,
+            'max_dd' : max_dd,
+            'max_dd_start' : max_dd_start,
+            'max_dd_end' : max_dd_end,
             'volume_trade' : tot_volume,
             'return_per_trade' : return_per_trade,
             'mean_return' : mean_return,
@@ -319,39 +324,32 @@ class Portfolio:
             'sharpe' : mean_return/std_return
         }
 
-    def get_portfolio_metrics(self, include_partial: bool = True) -> Dict:
-        total_trades = 0
+    def _calculate_max_drawdown(self, nav: Dict[datetime, float]) -> Tuple:
+        # Sort by date
+        sorted_items = sorted(nav.items())
+        dates = [item[0] for item in sorted_items]
+        navs = [item[1] for item in sorted_items]
 
-        volumes = []
-        tot_volume = 0
+        peak_idx = 0
+        max_dd = 0
+        max_dd_start = dates[0]
+        max_dd_end = dates[0]
+        temp_peak_idx = 0
 
-        for ticker in self.trade_history.keys():
-            total_trades += len(self.trade_history[ticker])
+        for i in range(1, len(navs)):
+            if navs[i] > navs[temp_peak_idx]:
+                temp_peak_idx = i
             
-            ticker_volume = 0
-            for trade in self.trade_history[ticker]:
-                ticker_volume += abs(trade.shares_delta * trade.price)
-            volumes.append({'ticker' : ticker, 'volume' : ticker_volume})
-            tot_volume += ticker_volume
+            drawdown = (navs[i] - navs[temp_peak_idx]) / navs[temp_peak_idx]
+            
+            if drawdown < max_dd:
+                max_dd = drawdown
+                peak_idx = temp_peak_idx
+                max_dd_start = dates[peak_idx]
+                max_dd_end = dates[i]
 
-        closed_trades = self.closed_trades
-
-        winning_trades = [t for t in closed_trades if t.pnl > 0]
-        losing_trades = [t for t in closed_trades if t.pnl <= 0]
-
-        dollar_pnl = 0
-        for trade in closed_trades:
-            dollar_pnl += trade.pnl
-        
-        return_per_trade = dollar_pnl / tot_volume
-
-        return {
-            'total_trades' : total_trades,
-            'closed_trades' : len(closed_trades),
-            'open_trades' : total_trades - len(closed_trades),
-            'win_rate' : len(winning_trades) / total_trades
-        }
-
+        return max_dd, max_dd_start, max_dd_end
+    
     def get_position_details(self, current_prices: Dict[str, float]) -> List[Dict]:
         positions = []
         for ticker, trade in self.open_trades.items():

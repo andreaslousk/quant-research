@@ -175,7 +175,7 @@ class TradingSystem:
 
             current_date += timedelta(days=1)
 
-        return self._compile_results()
+        return self._compile_results(close_prices)
 
     def _record_daily_snapshot(self, date: datetime, prices: Dict[str, float]):
         all_tickers = list(set(ticker for strategy in self.strategies for ticker in strategy.tickers))
@@ -185,16 +185,8 @@ class TradingSystem:
         self.portfolio.record_nav(prices)
 
     def _compile_results(self, current_prices: Dict[str, float]) -> Dict:
-        portfolio_summary = self.portfolio.get_portfolio_summary(current_prices)
+        return self.portfolio.get_portfolio_summary(current_prices)
 
-        nav = list(self.portfolio.nav_history.values())
+        
 
-    def _calculate_max_drawdown(self, nav_series: np.ndarray) -> float:
-        '''
-        Calculate maximum drawdown
-
-        Drawdown = peak-to-trough decline during a specific period
-        '''
-        cummax = np.maximum.accumulate(nav_series)
-        drawdowns = (cummax - nav_series) / cummax
-        return np.max(drawdowns) if len(drawdowns) > 0 else 0
+    
