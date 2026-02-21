@@ -1,8 +1,10 @@
-from datetime import datetime
-
+# autopep8: off
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Optional
+
+# autopep8: on
 
 
 class PositionSide(Enum):

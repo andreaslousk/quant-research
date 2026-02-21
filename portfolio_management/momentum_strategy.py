@@ -1,3 +1,4 @@
+# autopep8: off
 import pandas as pd
 import sys
 
@@ -6,7 +7,10 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent))
 
+# isort: split
 from portfolio_management.strategy import StrategyFrequency, SignalTiming, ExecutionTiming, LongShortStrategy
+
+# autopep8: on
 
 
 class MomentumStrategy(LongShortStrategy):

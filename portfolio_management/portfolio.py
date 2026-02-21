@@ -1,6 +1,6 @@
+# autopep8: off
 import sys
 import numpy as np
-import pandas as pd
 
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -9,18 +9,22 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent.parent))  # root directory
 
+# isort: split
 from portfolio_management.trade import PositionSide, Trade, TradeAction, PositionAdjustment
+
+# autopep8: on
 
 
 class Portfolio:
-    def __init__(self, initial_cash: float, target_gmv: Optional[float] = None):
+    def __init__(self, initial_cash: float,
+                 target_gmv: Optional[float] = None):
         self.cash = initial_cash
         self.initial_cash = initial_cash
         self.target_gmv = target_gmv
         self.open_trades: Dict[str, Trade] = {}
         self.closed_trades: List[Trade] = []
         self.trade_history: Dict[str, List[PositionAdjustment]] = {}
-        
+
         self.cash_history = []
         self.position_history = []
         self.nav_history = []
@@ -32,7 +36,8 @@ class Portfolio:
             gmv += abs(trade.shares * price)
         return gmv
 
-    def get_position_gmv(self, current_prices: Dict[str, float]) -> Dict[str, float]:
+    def get_position_gmv(
+            self, current_prices: Dict[str, float]) -> Dict[str, float]:
         """Get current GMV for each open position"""
         return {
             ticker: abs(trade.shares * current_prices[ticker])
@@ -47,9 +52,11 @@ class Portfolio:
             nmv += trade.shares * price * trade.side.value
         return nmv
 
-    def _open_position(self, ticker: str, side: PositionSide, shares: float, price: float, date: datetime):
-        assert self.cash - shares * price * side.value >= 0, 'You cannot open a position that results in negative cash'
-        
+    def _open_position(self, ticker: str, side: PositionSide,
+                       shares: float, price: float, date: datetime):
+        assert self.cash - shares * price * \
+            side.value >= 0, 'You cannot open a position that results in negative cash'
+
         trade = Trade(
             ticker=ticker,
             side=side,
@@ -75,7 +82,8 @@ class Portfolio:
         # Update cash (for long we pay, for short we receive)
         self.cash -= shares * price * side.value
 
-    def _add_to_position(self, ticker: str, target_shares: float, price: float, date: datetime):
+    def _add_to_position(
+            self, ticker: str, target_shares: float, price: float, date: datetime):
         if ticker not in self.open_trades:
             return
 
@@ -110,7 +118,8 @@ class Portfolio:
         shares_delta = target_shares - trade.shares  # Negative value
         shares_closed = abs(shares_delta)
 
-        assert self.cash - shares_delta * price * trade.side.value >= 0, 'You cannot open a position that results in negative cash'
+        assert self.cash - shares_delta * price * \
+            trade.side.value >= 0, 'You cannot open a position that results in negative cash'
 
         # Create a closed trade record for the partial exit
         partial_trade = Trade(
@@ -168,73 +177,85 @@ class Portfolio:
         del self.open_trades[ticker]
 
     def update_positions(self, target_weights: Dict[str, float],
-                    prices: Dict[str, float],
-                    date: datetime):
+                         prices: Dict[str, float],
+                         date: datetime):
         total_weight = sum(abs(w) for w in target_weights.values())
-        
+
+        current_nav = self.get_portfolio_value(prices)
+        effective_gmv = min(self.target_gmv, current_nav)
+
         if total_weight == 0:
             for ticker in list(self.open_trades.keys()):
                 if ticker in prices:
-                    self._close_position(ticker, prices[ticker], date, TradeAction.CLOSE)
+                    self._close_position(
+                        ticker, prices[ticker], date, TradeAction.CLOSE)
             return
-        
-        all_tickers = set(list(self.open_trades.keys()) + list(target_weights.keys()))
-        
+
+        all_tickers = set(list(self.open_trades.keys()) +
+                          list(target_weights.keys()))
+
         # PASS 1: Close/reduce positions first to free up cash
         for ticker in all_tickers:
             if ticker not in prices:
                 continue
-            
+
             target_weight = target_weights.get(ticker, 0.0)
             current_trade = self.open_trades.get(ticker)
-            
+
             if not current_trade:
                 continue
-            
-            target_notional = target_weight * self.target_gmv
-            target_shares = round(abs(target_notional / prices[ticker])) if target_notional != 0 else 0
+
+            target_notional = target_weight * effective_gmv
+            target_shares = int(
+                abs(target_notional / prices[ticker])) if target_notional != 0 else 0
             target_side = PositionSide.LONG if target_weight > 0 else PositionSide.SHORT
-            
+
             # Close positions with no target
             if abs(target_weight) < 1e-6:
-                self._close_position(ticker, prices[ticker], date, TradeAction.CLOSE)
-            
+                self._close_position(
+                    ticker, prices[ticker], date, TradeAction.CLOSE)
+
             # Close positions that need to flip sides
             elif current_trade.side != target_side:
-                self._close_position(ticker, prices[ticker], date, TradeAction.CLOSE)
-            
+                self._close_position(
+                    ticker, prices[ticker], date, TradeAction.CLOSE)
+
             # Reduce positions that are too large
             elif target_shares < current_trade.shares:
-                self._reduce_position(ticker, target_shares, prices[ticker], date)
-        
+                self._reduce_position(
+                    ticker, target_shares, prices[ticker], date)
+
         # PASS 2: Open/add positions after cash is freed up
         for ticker in all_tickers:
             if ticker not in prices:
                 continue
-            
+
             target_weight = target_weights.get(ticker, 0.0)
             current_trade = self.open_trades.get(ticker)
-            
+
             if abs(target_weight) < 1e-6:
                 continue
-            
-            target_notional = target_weight * self.target_gmv
-            target_shares = round(abs(target_notional / prices[ticker])) if target_notional != 0 else 0
+
+            target_notional = target_weight * effective_gmv
+            target_shares = int(
+                abs(target_notional / prices[ticker])) if target_notional != 0 else 0
             target_side = PositionSide.LONG if target_weight > 0 else PositionSide.SHORT
-            
+
             # Open new position
             if not current_trade:
-                self._open_position(ticker, target_side, target_shares, prices[ticker], date)
-            
+                self._open_position(ticker, target_side,
+                                    target_shares, prices[ticker], date)
+
             # Add to existing position
             elif target_shares > current_trade.shares:
-                self._add_to_position(ticker, target_shares, prices[ticker], date)
+                self._add_to_position(
+                    ticker, target_shares, prices[ticker], date)
 
     def record_nav(self, date: datetime, current_prices: Dict[str, float]):
         current_nav = self.get_portfolio_value(current_prices)
-        
+
         self.nav_history.append({
-            'date' : date,
+            'date': date,
             'nav': current_nav})
 
     def record_cash(self, date: datetime):
@@ -243,9 +264,11 @@ class Portfolio:
             'cash': self.cash
         })
 
-    def record_position(self, date: datetime, tickers: List[str], prices: Dict[str, float]):
+    def record_position(self, date: datetime,
+                        tickers: List[str], prices: Dict[str, float]):
         for ticker in tickers:
-            shares = self.open_trades[ticker].shares * self.open_trades[ticker].side.value if ticker in self.open_trades else 0
+            shares = self.open_trades[ticker].shares * \
+                self.open_trades[ticker].side.value if ticker in self.open_trades else 0
             self.position_history.append({
                 'date': date,
                 'ticker': ticker,
@@ -255,10 +278,11 @@ class Portfolio:
 
     def get_latest_cash(self):
         return self.cash
-    
+
     def get_latest_positions(self, tickers: List[str]) -> Dict[str, float]:
         return {
-            ticker: self.open_trades[ticker].shares * self.open_trades[ticker].side.value
+            ticker: self.open_trades[ticker].shares *
+            self.open_trades[ticker].side.value
             if ticker in self.open_trades else 0
             for ticker in tickers
         }
@@ -283,7 +307,7 @@ class Portfolio:
 
         nav = self.cash + position_value
         return nav
-    
+
     def get_portfolio_summary(self, current_prices: Dict[str, float]) -> Dict:
         total_trades = 0
 
@@ -292,71 +316,76 @@ class Portfolio:
 
         for ticker in self.trade_history.keys():
             total_trades += len(self.trade_history[ticker])
-            
+
             ticker_volume = 0
             for trade in self.trade_history[ticker]:
                 ticker_volume += abs(trade.shares_delta * trade.price)
-            volumes.append({'ticker' : ticker, 'volume' : ticker_volume})
+            volumes.append({'ticker': ticker, 'volume': ticker_volume})
             tot_volume += ticker_volume
 
         pnl = self.get_open_pnl(current_prices)
 
         for trade in self.closed_trades:
             pnl += trade.pnl
-        
-        return_per_trade = pnl/tot_volume
 
-        daily_return = np.diff(self.nav_history)/self.nav_history[:-1]
+        return_per_trade = pnl / tot_volume
+
+        nav_history = [entry['nav'] for entry in self.nav_history]
+
+        daily_return = np.diff(nav_history) / nav_history[:-1]
         mean_return = np.mean(daily_return)
         std_return = np.std(daily_return)
 
-        max_dd, max_dd_start, max_dd_end = self._calculate_max_drawdown(self.nav_history)
+        max_dd_dict = self._calculate_max_drawdown(
+            self.nav_history)
 
         return {
-            'pnl' : pnl/self.initial_cash,
-            'max_dd' : max_dd,
-            'max_dd_start' : max_dd_start,
-            'max_dd_end' : max_dd_end,
-            'volume_trade' : tot_volume,
-            'return_per_trade' : return_per_trade,
-            'mean_return' : mean_return,
-            'std_return' : std_return, 
-            'sharpe' : mean_return/std_return
+            'pnl': pnl,
+            'final_nav': self.nav_history[-1]['nav'],
+            'return': pnl / self.initial_cash,
+            'max_dd': max_dd_dict['max_drawdown'],
+            'max_dd_start': max_dd_dict['start_date'],
+            'max_dd_end': max_dd_dict['end_date'],
+            'max_dd_duration': max_dd_dict['duration_days'],
+            'volume_trade': tot_volume,
+            'return_per_trade': return_per_trade,
+            'mean_return': mean_return,
+            'std_return': std_return,
+            'sharpe': mean_return / std_return
         }
 
-    def _calculate_max_drawdown(self, nav: Dict[datetime, float]) -> Tuple:
-        # Sort by date
-        sorted_items = sorted(nav.items())
-        dates = [item[0] for item in sorted_items]
-        navs = [item[1] for item in sorted_items]
+    def _calculate_max_drawdown(self, daily_nav: List[Dict]) -> Dict:
+        nav_series = np.array([d['nav'] for d in daily_nav])
+        dates = [d['date'] for d in daily_nav]
 
+        cummax = np.maximum.accumulate(nav_series)
+        drawdowns = (cummax - nav_series) / cummax
+
+        max_dd = np.max(drawdowns)
+        max_dd_idx = np.argmax(drawdowns)  # End of drawdown
+
+        # Find start of drawdown (last peak before max_dd_idx)
         peak_idx = 0
-        max_dd = 0
-        max_dd_start = dates[0]
-        max_dd_end = dates[0]
-        temp_peak_idx = 0
+        for i in range(max_dd_idx, -1, -1):
+            if nav_series[i] == cummax[i]:
+                peak_idx = i
+                break
 
-        for i in range(1, len(navs)):
-            if navs[i] > navs[temp_peak_idx]:
-                temp_peak_idx = i
-            
-            drawdown = (navs[i] - navs[temp_peak_idx]) / navs[temp_peak_idx]
-            
-            if drawdown < max_dd:
-                max_dd = drawdown
-                peak_idx = temp_peak_idx
-                max_dd_start = dates[peak_idx]
-                max_dd_end = dates[i]
+        return {
+            'max_drawdown': max_dd,
+            'start_date': dates[peak_idx],
+            'end_date': dates[max_dd_idx],
+            'duration_days': (dates[max_dd_idx] - dates[peak_idx]).days
+        }
 
-        return max_dd, max_dd_start, max_dd_end
-    
-    def get_position_details(self, current_prices: Dict[str, float]) -> List[Dict]:
+    def get_position_details(
+            self, current_prices: Dict[str, float]) -> List[Dict]:
         positions = []
         for ticker, trade in self.open_trades.items():
             current_price = current_prices.get(ticker, trade.entry_price)
             unrealized_pnl = (current_price - trade.entry_price) * \
                 trade.shares * trade.side.value
-            notional = abs(trade.shares * current_price)
+            notional = trade.side.value * trade.shares * current_price
 
             positions.append({
                 'ticker': ticker,

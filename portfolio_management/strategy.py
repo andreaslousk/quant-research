@@ -1,9 +1,12 @@
+# autopep8: off
 import pandas as pd
 import numpy as np
 
 from datetime import datetime, timedelta
 from typing import Dict, List
 from enum import Enum
+
+# autopep8: on
 
 
 class StrategyFrequency(Enum):
@@ -48,7 +51,7 @@ class LongShortStrategy:
         self.execution_needed = False
 
         self.current_weights = {}
-        self.pending_weights = {}      
+        self.pending_weights = {}
 
         self.signal_history = []
 
@@ -66,7 +69,7 @@ class LongShortStrategy:
             return current_date.month != self.last_rebalance_date.month
         elif self.rebalance_frequency == StrategyFrequency.CUSTOM:
             return days_since >= self.custom_days
-        
+
         return False
 
     def rebalance_needed(self, current_date: datetime) -> bool:
@@ -77,7 +80,8 @@ class LongShortStrategy:
                 return (current_date - self.last_signal_date).days > 0
         return False
 
-    def generate_signals(self, current_date: datetime, data: pd.DataFrame) -> Dict[str, float]:
+    def generate_signals(self, current_date: datetime,
+                         data: pd.DataFrame) -> Dict[str, float]:
         signals = {}
         for ticker in self.tickers:
             signals[ticker] = self._generate_signal(ticker, data.loc[ticker])
@@ -87,36 +91,37 @@ class LongShortStrategy:
     def _generate_signal(self, ticker: str, data: pd.DataFrame) -> float:
         raise NotImplementedError
 
-    def generate_weights(self, current_date:datetime, data: pd.DataFrame):
+    def generate_weights(self, current_date: datetime, data: pd.DataFrame):
         signals = self.generate_signals(current_date, data)
-        
+
         normal_factor = np.sum(np.abs(list(signals.values())))
         for ticker, signal in signals.items():
             self.pending_weights[ticker] = signal / normal_factor
 
         self.signal_history.append({
-        'date': current_date,
-        'signals': signals.copy(),
-        'weights': self.pending_weights.copy()
+            'date': current_date,
+            'signals': signals.copy(),
+            'weights': self.pending_weights.copy()
         })
 
         self.execution_needed = True
-        
+
         # Calculate when this will execute
         if self.execution_timing == ExecutionTiming.SAME_DAY_CLOSE:
             self.last_execution_date = self.last_signal_date
         else:  # NEXT_OPEN or NEXT_CLOSE
-            self.last_execution_date = self.last_signal_date + timedelta(days=1)
+            self.last_execution_date = self.last_signal_date + \
+                timedelta(days=1)
         return self.pending_weights
-    
+
     def rebalance(self):
         self.current_weights = self.pending_weights
         self.pending_weights = {}
         self.execution_needed = False
         return self.current_weights
-    
+
     def get_execution_timing(self):
         return self.execution_timing
-    
+
     def get_signal_timing(self):
         return self.signal_timing

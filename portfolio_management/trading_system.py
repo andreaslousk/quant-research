@@ -1,14 +1,19 @@
-from data import data_processor as feature_engineering
-from pathlib import Path
-from strategy import LongShortStrategy, SignalTiming, ExecutionTiming
-from portfolio import Portfolio
-from typing import Dict, List
-from datetime import datetime, timedelta
-import pandas as pd
-import numpy as np
+# autopep8: off
 import sys
-import warnings
-warnings.filterwarnings('ignore', category=DeprecationWarning)
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List
+
+import numpy as np
+import pandas as pd
+
+sys.path.append(str(Path(__file__).parent.parent.parent))  # root directory
+
+# isort: split
+from portfolio_management.portfolio import Portfolio
+from portfolio_management.strategy import ExecutionTiming, LongShortStrategy, SignalTiming
+
+# autopep8: on
 
 
 class TradingSystem:
@@ -55,7 +60,8 @@ class TradingSystem:
             strategy.rebalance()
             rebalance_open.append(strategy.name)
 
-        # Step 2: Combine weights from ALL strategies (not just those rebalancing)
+        # Step 2: Combine weights from ALL strategies (not just those
+        # rebalancing)
         target_weights = {}
         for strategy in self.strategies:
             strategy_allocation = self.strategy_allocations[strategy.name]
@@ -81,7 +87,8 @@ class TradingSystem:
         self.execute_open = self.execute_next_open.copy()
         self.execute_next_open = []
 
-    def rebalance_close(self, current_date: datetime, prices: Dict[str, float]):
+    def rebalance_close(self, current_date: datetime,
+                        prices: Dict[str, float]):
         rebalance_close = []
 
         # Get OLD weights before rebalancing
@@ -96,7 +103,8 @@ class TradingSystem:
             strategy.rebalance()
             rebalance_close.append(strategy.name)
 
-        # Step 2: Combine weights from ALL strategies (not just those rebalancing)
+        # Step 2: Combine weights from ALL strategies (not just those
+        # rebalancing)
         target_weights = {}
         for strategy in self.strategies:
             strategy_allocation = self.strategy_allocations[strategy.name]
@@ -124,7 +132,8 @@ class TradingSystem:
 
     def get_signal_open(self, current_date: datetime, data: pd.DataFrame):
         for strategy in self.strategies:
-            if strategy.signal_needed(current_date) and strategy.signal_timing == SignalTiming.MARKET_OPEN:
+            if strategy.signal_needed(
+                    current_date) and strategy.signal_timing == SignalTiming.MARKET_OPEN:
                 strategy.generate_weights(current_date, data)
 
                 execution_timing = strategy.execution_timing
@@ -138,7 +147,8 @@ class TradingSystem:
 
     def get_signal_close(self, current_date: datetime, data: pd.DataFrame):
         for strategy in self.strategies:
-            if strategy.signal_needed(current_date) and strategy.signal_timing == SignalTiming.MARKET_CLOSE:
+            if strategy.signal_needed(
+                    current_date) and strategy.signal_timing == SignalTiming.MARKET_CLOSE:
                 strategy.generate_weights(current_date, data)
 
                 execution_timing = strategy.execution_timing
@@ -148,11 +158,13 @@ class TradingSystem:
                 else:
                     self.execute_next_close.append(strategy)
 
-    def run_process_open(self, current_date: datetime, data: pd.DataFrame, prices: Dict[str, float]):
+    def run_process_open(self, current_date: datetime,
+                         data: pd.DataFrame, prices: Dict[str, float]):
         self.get_signal_open(current_date, data)
         self.rebalance_open(current_date, prices)
 
-    def run_process_close(self, current_date: datetime, data: pd.DataFrame, prices: Dict[str, float]):
+    def run_process_close(self, current_date: datetime,
+                          data: pd.DataFrame, prices: Dict[str, float]):
         self.get_signal_close(current_date, data)
         self.rebalance_close(current_date, prices)
 
@@ -178,15 +190,17 @@ class TradingSystem:
         return self._compile_results(close_prices)
 
     def _record_daily_snapshot(self, date: datetime, prices: Dict[str, float]):
-        all_tickers = list(set(ticker for strategy in self.strategies for ticker in strategy.tickers))
-    
+        all_tickers = list(
+            set(ticker for strategy in self.strategies for ticker in strategy.tickers))
+
         self.portfolio.record_cash(date)
         self.portfolio.record_position(date, all_tickers, prices)
-        self.portfolio.record_nav(prices)
+        self.portfolio.record_nav(date, prices)
 
     def _compile_results(self, current_prices: Dict[str, float]) -> Dict:
-        return self.portfolio.get_portfolio_summary(current_prices)
+        portfolio_summary = self.portfolio.get_portfolio_summary(
+            current_prices)
+        portfolio_summary['start_date'] = self.initial_date
+        portfolio_summary['end_date'] = self.end_date
 
-        
-
-    
+        return portfolio_summary
