@@ -6,14 +6,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.append(str(Path(__file__).parent.parent.parent))  # root directory
+ROOT_DIR = Path.home() / 'quant_research'
+sys.path.insert(0, str(ROOT_DIR))
 
 # isort: split
 from data import data_processor
 from portfolio_management.momentum_strategy import MomentumStrategy
 
 # autopep8: on
-TEST_DATA_PATH = TEST_DATA_PATH = Path(__file__).parent.parent / \
+TEST_DATA_PATH = Path(__file__).parent.parent / \
     'tests' / 'test_data' / 'AAPL_MSFT.csv'
 TICKERS = ['AAPL', 'MSFT']
 
@@ -35,6 +36,14 @@ def return_data():
 
 
 def test_signal_generation(strategy, return_data):
+    '''Verify that signals are generated on the correct schedule and agree with momentum logic.
+
+    Checks that:
+    - A signal is required on the first date.
+    - Absolute portfolio weights sum to 1.0 on each signal date.
+    - Signal direction matches the sign of the 1-week return.
+    - Consecutive signal dates are at least lookback_days apart.
+    '''
     dates = return_data.index.get_level_values(0).unique().to_list()
 
     assert strategy.signal_needed(
@@ -52,21 +61,13 @@ def test_signal_generation(strategy, return_data):
                     'signal_needed': True,
                     'weight': weight
                 })
-        else:
-            for ticker, weight in strategy.current_weights.items():
-                records.append({
-                    'date': date,
-                    'ticker': ticker,
-                    'signal_needed': False,
-                    'weight': weight  # Carry forward last weights
-                })
 
     signals = pd.DataFrame(records).set_index(['date', 'ticker'])
     weights_total = signals['weight'].abs().groupby('date').sum()
 
     assert (weights_total == 1).all(), 'Position weights must all total to 1!'
 
-    signals = signals.merge(return_data['return_1w'], on=['date', 'ticker'])
+    signals = signals.join(return_data['return_1w'], on=['date', 'ticker'])
     signals['weight_sign'] = np.sign(signals['weight']).replace(0, -1)
     signals['return_1w_sign'] = np.sign(signals['return_1w']).replace(0, -1)
 

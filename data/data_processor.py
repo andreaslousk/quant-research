@@ -1,24 +1,36 @@
-import pandas as pd
+# autopep8: off
+import sys
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
+
+ROOT_DIR = Path.home() / 'quant_research'
+sys.path.insert(0, str(ROOT_DIR))
+
+# isort: split
 from data.config import *
+
+# autopep8: on
 
 
 def adjust_dividends_for_splits(dividends_df, splits_df):
-    """
-    Adjust dividends for stock splits (supports multiple tickers).
+    # Step 1: normalise dividend amounts to account for subsequent splits
+    '''Adjust historical dividend amounts to account for subsequent stock splits.
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     dividends_df : pd.DataFrame
         Columns: ['ticker', 'ex_dividend_date', 'dividend_amount']
     splits_df : pd.DataFrame
         Columns: ['ticker', 'split_date', 'split_ratio']
-        split_ratio is new_shares/old_shares (e.g., 2.0 for 2-for-1)
+        split_ratio is new_shares/old_shares (e.g. 2.0 for a 2-for-1 split).
 
-    Returns:
-    --------
-    pd.DataFrame with adjusted dividends
-    """
+    Returns
+    -------
+    pd.DataFrame
+        Copy of dividends_df with an 'adjusted_dividend' column added.
+    '''
     dividends = dividends_df.copy()
     splits = splits_df.copy()
 
@@ -63,21 +75,24 @@ def adjust_dividends_for_splits(dividends_df, splits_df):
 
 
 def adjust_prices_for_dividends(prices_df, adjusted_dividends_df):
-    """
-    Adjust OHLC prices for dividends (supports multiple tickers).
+    # Step 2: apply the normalised dividends to OHLC prices
+    '''Adjust OHLC prices for dividends across multiple tickers.
+
     Assumes prices are already adjusted for splits.
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     prices_df : pd.DataFrame
         Columns: ['ticker', 'date', 'open', 'high', 'low', 'close']
     adjusted_dividends_df : pd.DataFrame
         Columns: ['ticker', 'ex_dividend_date', 'adjusted_dividend']
 
-    Returns:
-    --------
-    pd.DataFrame with dividend-adjusted prices
-    """
+    Returns
+    -------
+    pd.DataFrame
+        Copy of prices_df with OHLC columns scaled by the cumulative
+        dividend adjustment factor.
+    '''
     prices = prices_df.copy()
     dividends = adjusted_dividends_df.copy()
 
@@ -141,24 +156,69 @@ def adjust_prices_for_dividends(prices_df, adjusted_dividends_df):
 
 
 def apply_dividend_adjustment(df, dividends_df):
-    print("Applying dividend adjustments (subtracting cash amounts)...")
+    # Orchestrator: calls adjust_prices_for_dividends per ticker
+    '''Apply dividend price adjustments to all tickers in a combined DataFrame.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Price data with a 'ticker' column.
+    dividends_df : pd.DataFrame
+        Dividend data with columns ['ticker', 'ex_dividend_date', 'adjusted_dividend'].
+
+    Returns
+    -------
+    pd.DataFrame
+        Price data with dividend-adjusted OHLC values.
+    '''
+    print('Applying dividend adjustments (subtracting cash amounts)...')
     df = df.groupby('ticker', group_keys=False).apply(
         lambda x: adjust_prices_for_dividends(x, dividends_df))
-    print("✓ Dividend adjustments complete")
+    print('✓ Dividend adjustments complete')
     return df
 
 
 def add_metadata(df, stocks_dict):
-    print("Adding sector and region metadata...")
+    '''Add sector and region metadata to a ticker DataFrame using a lookup dict.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with a 'ticker' column.
+    stocks_dict : dict
+        Mapping of ticker -> {'sector': ..., 'region': ...}.
+
+    Returns
+    -------
+    pd.DataFrame
+        Input DataFrame with 'sector' and 'region' columns added.
+    '''
+    print('Adding sector and region metadata...')
     df['region'] = df['ticker'].map(
         lambda x: stocks_dict.get(x, {}).get('region', 'Unknown'))
     df['sector'] = df['ticker'].map(
         lambda x: stocks_dict.get(x, {}).get('sector', 'Unknown'))
-    print("✓ Metadata added")
+    print('✓ Metadata added')
     return df
 
 
 def calculate_returns(group, returns_dict=RETURNS_PERIODS):
+    '''Calculate percentage returns for multiple periods for a single ticker group.
+
+    Adds columns named 'return_{period_label}' for each entry in returns_dict.
+
+    Parameters
+    ----------
+    group : pd.DataFrame
+        Single-ticker price DataFrame with a 'close' column, sorted by date.
+    returns_dict : dict, optional
+        Mapping of {period_days: period_label}.
+
+    Returns
+    -------
+    pd.DataFrame
+        Input group with return columns appended.
+    '''
     for period, period_label in returns_dict.items():
         group[f'return_{period_label}'] = group['close'].pct_change(
             periods=period)
@@ -166,6 +226,22 @@ def calculate_returns(group, returns_dict=RETURNS_PERIODS):
 
 
 def calculate_volatility(group, vols_dict=VOLS_PERIODS):
+    '''Calculate annualised rolling volatility for multiple windows for a single ticker group.
+
+    Adds columns named 'vol_{period_label}' for each entry in vols_dict.
+
+    Parameters
+    ----------
+    group : pd.DataFrame
+        Single-ticker DataFrame with a 'return_1d' column, sorted by date.
+    vols_dict : dict, optional
+        Mapping of {rolling_window_days: period_label}.
+
+    Returns
+    -------
+    pd.DataFrame
+        Input group with volatility columns appended.
+    '''
     for period, period_label in vols_dict.items():
         group[f'vol_{period_label}'] = group['return_1d'].rolling(
             period).std() * np.sqrt(252)
@@ -173,26 +249,65 @@ def calculate_volatility(group, vols_dict=VOLS_PERIODS):
 
 
 def calculate_volume_change(group):
+    '''Calculate the 1-month (21-day) percentage change in volume for a single ticker group.
+
+    Adds a 'volume_change_1m' column to the group.
+
+    Parameters
+    ----------
+    group : pd.DataFrame
+        Single-ticker DataFrame with a 'volume' column, sorted by date.
+
+    Returns
+    -------
+    pd.DataFrame
+        Input group with 'volume_change_1m' column appended.
+    '''
     group['volume_change_1m'] = group['volume'].pct_change(periods=21)
     return group
 
 
 def process_all_tickers(df):
-    print("Processing all tickers (returns, volatility, volume)...")
+    '''Compute returns, volatility, and volume change for all tickers and drop NaN rows.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Combined price DataFrame with 'ticker', 'date', 'close', and 'volume' columns.
+
+    Returns
+    -------
+    pd.DataFrame
+        Processed DataFrame with return, volatility, and volume change columns added,
+        and NaN rows removed.
+    '''
+    print('Processing all tickers (returns, volatility, volume)...')
     df = df.sort_values(['ticker', 'date'])
     df = df.groupby('ticker', group_keys=False).apply(calculate_returns)
     df = df.groupby('ticker', group_keys=False).apply(calculate_volatility)
     df = df.groupby('ticker', group_keys=False).apply(calculate_volume_change)
     df = df.dropna()
-    print(f"✓ Processing complete. Rows after dropna: {len(df):,}")
+    print(f'✓ Processing complete. Rows after dropna: {len(df):,}')
     return df
 
 
 def one_hot_encode_categoricals(df):
-    print("One-hot encoding sectors and regions...")
+    '''One-hot encode the sector and region columns and append the dummies to the DataFrame.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with 'sector' and 'region' columns.
+
+    Returns
+    -------
+    pd.DataFrame
+        Input DataFrame with integer dummy columns for each sector and region appended.
+    '''
+    print('One-hot encoding sectors and regions...')
     sector_dummies = pd.get_dummies(df['sector']).astype(int)
     region_dummies = pd.get_dummies(df['region']).astype(int)
     df = pd.concat([df, sector_dummies, region_dummies], axis=1)
     print(
-        f"✓ Added {len(sector_dummies.columns)} sector columns and {len(region_dummies.columns)} region columns")
+        f'✓ Added {len(sector_dummies.columns)} sector columns and {len(region_dummies.columns)} region columns')
     return df

@@ -14,10 +14,7 @@ class PositionSide(Enum):
 
 class TradeAction(Enum):
     OPEN = 'open'
-    ADD = 'add'
-    REDUCE = 'reduce'
     CLOSE = 'close'
-    FLIP = 'flip'
 
 
 @dataclass
@@ -33,24 +30,28 @@ class Trade:
 
     @property
     def is_open(self) -> bool:
+        '''Return True if the trade has not yet been closed.'''
         return self.exit_date is None
 
     @property
     def notional_value(self) -> float:
+        '''Return the absolute notional value of the trade at its entry (or exit) price.'''
         price = self.exit_price if not self.is_open else self.entry_price
         return abs(self.shares * price)
 
     @property
     def pnl(self) -> Optional[float]:
+        '''Return the realised PnL for a closed trade, or None if the trade is still open.'''
         if not self.is_open:
             price_change = self.exit_price - self.entry_price
+            # For shorts, side.value = -1 inverts the sign so a price decline yields positive PnL
             return self.shares * price_change * self.side.value
         return None
 
     @property
     def return_pct(self) -> Optional[float]:
+        '''Return the percentage return for a closed trade, or None if still open.'''
         if not self.is_open:
-            if not self.is_open:
                 price_change = self.exit_price - self.entry_price
                 return (price_change / self.entry_price) * self.side.value
         return None
