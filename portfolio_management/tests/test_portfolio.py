@@ -6,7 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.append(str(Path(__file__).parent.parent.parent))  # root directory
+ROOT_DIR = Path.home() / 'quant_research'
+sys.path.insert(0, str(ROOT_DIR))
 
 # isort: split
 from data import data_processor
@@ -23,7 +24,7 @@ def portfolio():
 
 @pytest.fixture
 def return_data():
-    TEST_DATA_PATH = TEST_DATA_PATH = Path(__file__).parent.parent / \
+    TEST_DATA_PATH = Path(__file__).parent.parent / \
         'tests' / 'test_data' / 'AAPL_MSFT.csv'
 
     raw_data = pd.read_csv(TEST_DATA_PATH)
@@ -36,6 +37,13 @@ def return_data():
 
 
 def test_portfolio_implementation(portfolio, return_data):
+    '''Verify that portfolio NAV, cash, and position tracking are internally consistent.
+
+    Checks that:
+    - Initial NAV equals initial cash.
+    - Cash never goes negative after random rebalances.
+    - Portfolio value (cash + NMV) equals the independently computed NAV.
+    '''
     np.random.seed(42)
     dates = return_data.index.get_level_values('date').unique().to_list()
     tickers = return_data.index.get_level_values('ticker').unique().to_list()

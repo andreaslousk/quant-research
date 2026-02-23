@@ -1,23 +1,26 @@
-import boto3
+# autopep8: off
 import datetime
-import time
-import json
 import sys
-
-import pandas as pd
-
+import time
 from pathlib import Path
-from botocore.config import Config
 
-from data.config import *
+import boto3
+import pandas as pd
+from botocore.config import Config
 from massive import RESTClient
 
-from data.utils import unzip_csv_gz_to_directory
+ROOT_DIR = Path.home() / 'quant_research'
+sys.path.insert(0, str(ROOT_DIR))
+
+# isort: split
+from data.config import *
 from data.data_processor import *
+
+# autopep8: on
 
 
 def create_s3_session():
-    """Create and return boto3 session and s3 client"""
+    '''Create and return a configured boto3 S3 client.'''
     session = boto3.Session(
         aws_access_key_id=AWS_ACCESS_KEY_ID,
         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
@@ -31,6 +34,22 @@ def create_s3_session():
 
 
 def download_stock_data(start_date, end_date, output_dir=DATA_GZ_DIR):
+    '''Download daily aggregate stock data from S3 for a date range.
+
+    Parameters
+    ----------
+    start_date : datetime.date
+        First date to download (inclusive).
+    end_date : datetime.date
+        Last date to download (inclusive).
+    output_dir : str, optional
+        Directory to save the downloaded .csv.gz files.
+
+    Returns
+    -------
+    list of str
+        Paths to the successfully downloaded files.
+    '''
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -79,16 +98,33 @@ def download_stock_data(start_date, end_date, output_dir=DATA_GZ_DIR):
     return downloaded_files
 
 
-def load_all_csv_files(directory, pattern="*.csv"):
+def load_all_csv_files(directory, pattern='*.csv'):
+    '''Load and combine all CSV files matching a glob pattern from a directory.
+
+    Each file's stem is parsed as a date and added as a 'date' column.
+
+    Parameters
+    ----------
+    directory : str or Path
+        Directory to search for CSV files.
+    pattern : str, optional
+        Glob pattern to filter files.
+
+    Returns
+    -------
+    pd.DataFrame
+        Combined DataFrame from all matched CSV files, or an empty DataFrame
+        if no files are found.
+    '''
     directory = Path(directory)
     csv_files = sorted(directory.glob(pattern))
 
     if not csv_files:
-        print(f"No CSV files found in {directory}")
+        print(f'No CSV files found in {directory}')
         return pd.DataFrame()
 
-    print(f"Found {len(csv_files)} CSV files in {directory}")
-    print(f"Loading files...")
+    print(f'Found {len(csv_files)} CSV files in {directory}')
+    print(f'Loading files...')
 
     df_list = []
 
@@ -102,21 +138,38 @@ def load_all_csv_files(directory, pattern="*.csv"):
             df_list.append(df)
 
             if i % 50 == 0:
-                print(f"  Loaded {i}/{len(csv_files)} files...")
+                print(f'  Loaded {i}/{len(csv_files)} files...')
 
         except Exception as e:
             pass
 
-    print(f"Combining {len(df_list)} dataframes...")
+    print(f'Combining {len(df_list)} dataframes...')
     combined_df = pd.concat(df_list, ignore_index=True)
 
-    print(f"\n{'=' * 50}")
-    print(f"{'=' * 50}")
+    print(f'\n{'=' * 50}')
+    print(f'{'=' * 50}')
 
     return combined_df
 
 
 def get_dividends_for_ticker(ticker, max_retries=API_MAX_RETRIES):
+    '''Fetch dividend history for a single ticker via the REST API.
+
+    Retries on failure with exponential back-off.
+
+    Parameters
+    ----------
+    ticker : str
+        Stock ticker symbol.
+    max_retries : int, optional
+        Maximum number of attempts before giving up.
+
+    Returns
+    -------
+    tuple of (list, list)
+        (ex_dates, dividends) — ex-dividend dates and corresponding cash amounts.
+        Returns ([], []) on persistent failure.
+    '''
     for attempt in range(max_retries):
         try:
             client = RESTClient(AWS_SECRET_ACCESS_KEY)
@@ -124,8 +177,8 @@ def get_dividends_for_ticker(ticker, max_retries=API_MAX_RETRIES):
             dividends = []
             for d in client.list_stocks_dividends(
                 ticker=f'{ticker}',
-                limit="100",
-                sort="ticker.asc",
+                limit='100',
+                sort='ticker.asc',
             ):
                 dividends.append(d)
 
@@ -138,22 +191,40 @@ def get_dividends_for_ticker(ticker, max_retries=API_MAX_RETRIES):
             if attempt < max_retries - 1:
                 wait_time = (attempt + 1) * 2
                 print(
-                    f"  Retry {attempt + 1} for {ticker} in {wait_time}s... ({e})")
+                    f'  Retry {attempt + 1} for {ticker} in {wait_time}s... ({e})')
                 time.sleep(wait_time)
             else:
                 print(
-                    f"✗ Failed to get dividends for {ticker} after {max_retries} attempts: {e}")
+                    f'✗ Failed to get dividends for {ticker} after {max_retries} attempts: {e}')
                 return [], []
 
 
 def get_dividends_data(tickers, batch_size=API_BATCH_SIZE,
                        batch_delay=API_BATCH_DELAY, request_delay=API_REQUEST_DELAY):
+    '''Fetch dividend data for a list of tickers in rate-limited batches.
+
+    Parameters
+    ----------
+    tickers : list of str
+        Stock ticker symbols.
+    batch_size : int, optional
+        Number of tickers per batch before applying a longer delay.
+    batch_delay : float, optional
+        Seconds to wait between batches.
+    request_delay : float, optional
+        Seconds to wait between individual requests.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns ['ticker', 'ex_dividend_date', 'dividend_amount'].
+    '''
     all_divs = []
 
-    print(f"Fetching dividends for {len(tickers)} tickers...")
+    print(f'Fetching dividends for {len(tickers)} tickers...')
     print(
-        f"Batch size: {batch_size}, Batch delay: {batch_delay}s, Request delay: {request_delay}s")
-    print(f"{'=' * 50}\n")
+        f'Batch size: {batch_size}, Batch delay: {batch_delay}s, Request delay: {request_delay}s')
+    print(f'{'=' * 50}\n')
 
     for i, ticker in enumerate(tickers, 1):
         ex_dates, dividends = get_dividends_for_ticker(ticker)
@@ -166,12 +237,12 @@ def get_dividends_data(tickers, batch_size=API_BATCH_SIZE,
             })
 
         if i % 50 == 0:
-            print(f"  Processed {i}/{len(tickers)} tickers...")
+            print(f'  Processed {i}/{len(tickers)} tickers...')
 
         time.sleep(request_delay)
 
         if i % batch_size == 0:
-            print(f"  Batch complete, waiting {batch_delay}s...")
+            print(f'  Batch complete, waiting {batch_delay}s...')
             time.sleep(batch_delay)
 
     dividends_df = pd.DataFrame(all_divs)
@@ -180,15 +251,32 @@ def get_dividends_data(tickers, batch_size=API_BATCH_SIZE,
         dividends_df['ex_dividend_date'] = pd.to_datetime(
             dividends_df['ex_dividend_date'])
 
-    print(f"\n{'=' * 50}")
+    print(f'\n{'=' * 50}')
     print(
-        f"✓ Collected {len(dividends_df)} dividend records from {len(tickers)} tickers")
-    print(f"{'=' * 50}")
+        f'✓ Collected {len(dividends_df)} dividend records from {len(tickers)} tickers')
+    print(f'{'=' * 50}')
 
     return dividends_df
 
 
 def get_splits_for_ticker_api(ticker, max_retries=API_MAX_RETRIES):
+    '''Fetch stock split history for a single ticker via the REST API.
+
+    Retries on failure with exponential back-off.
+
+    Parameters
+    ----------
+    ticker : str
+        Stock ticker symbol.
+    max_retries : int, optional
+        Maximum number of attempts before giving up.
+
+    Returns
+    -------
+    tuple of (list, list)
+        (split_dates, split_ratios) — execution dates and new/old share ratios.
+        Returns ([], []) on persistent failure.
+    '''
     for attempt in range(max_retries):
         try:
             client = RESTClient(AWS_SECRET_ACCESS_KEY)
@@ -196,8 +284,8 @@ def get_splits_for_ticker_api(ticker, max_retries=API_MAX_RETRIES):
             splits = []
             for s in client.list_stocks_splits(
                 ticker=ticker,
-                limit="100",
-                sort="execution_date.desc",
+                limit='100',
+                sort='execution_date.desc',
             ):
                 splits.append(s)
 
@@ -212,22 +300,40 @@ def get_splits_for_ticker_api(ticker, max_retries=API_MAX_RETRIES):
             if attempt < max_retries - 1:
                 wait_time = (attempt + 1) * 2
                 print(
-                    f"  Retry {attempt + 1} for {ticker} splits in {wait_time}s... ({e})")
+                    f'  Retry {attempt + 1} for {ticker} splits in {wait_time}s... ({e})')
                 time.sleep(wait_time)
             else:
                 print(
-                    f"✗ Failed to get splits for {ticker} after {max_retries} attempts: {e}")
+                    f'✗ Failed to get splits for {ticker} after {max_retries} attempts: {e}')
                 return [], []
 
 
 def get_splits_data(tickers, batch_size=API_BATCH_SIZE,
                     batch_delay=API_BATCH_DELAY, request_delay=API_REQUEST_DELAY):
+    '''Fetch stock split data for a list of tickers in rate-limited batches.
+
+    Parameters
+    ----------
+    tickers : list of str
+        Stock ticker symbols.
+    batch_size : int, optional
+        Number of tickers per batch before applying a longer delay.
+    batch_delay : float, optional
+        Seconds to wait between batches.
+    request_delay : float, optional
+        Seconds to wait between individual requests.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns ['ticker', 'split_date', 'split_ratio'].
+    '''
     all_splits = []
 
-    print(f"Fetching splits for {len(tickers)} tickers...")
+    print(f'Fetching splits for {len(tickers)} tickers...')
     print(
-        f"Batch size: {batch_size}, Batch delay: {batch_delay}s, Request delay: {request_delay}s")
-    print(f"{'=' * 50}\n")
+        f'Batch size: {batch_size}, Batch delay: {batch_delay}s, Request delay: {request_delay}s')
+    print(f'{'=' * 50}\n')
 
     for i, ticker in enumerate(tickers, 1):
         split_dates, split_ratios = get_splits_for_ticker_api(ticker)
@@ -240,37 +346,72 @@ def get_splits_data(tickers, batch_size=API_BATCH_SIZE,
             })
 
         if i % 50 == 0:
-            print(f"  Processed {i}/{len(tickers)} tickers...")
+            print(f'  Processed {i}/{len(tickers)} tickers...')
 
         time.sleep(request_delay)
 
         if i % batch_size == 0:
-            print(f"  Batch complete, waiting {batch_delay}s...")
+            print(f'  Batch complete, waiting {batch_delay}s...')
             time.sleep(batch_delay)
 
     splits_df = pd.DataFrame(all_splits)
 
-    print(f"\n{'=' * 50}")
+    print(f'\n{'=' * 50}')
     print(
-        f"✓ Collected {len(splits_df)} split records from {len(tickers)} tickers")
-    print(f"{'=' * 50}")
+        f'✓ Collected {len(splits_df)} split records from {len(tickers)} tickers')
+    print(f'{'=' * 50}')
 
     return splits_df
 
 
-if __name__ == '__main__':
-    # download_files = download_stock_data(START_DATE, END_DATE, output_dir=DATA_GZ_DIR)
-    # unzipped_files = unzip_csv_gz_to_directory(DATA_GZ_DIR, DATA_CSV_DIR)
-    df = load_all_csv_files(DATA_CSV_DIR)
+def create_backtest_data(tickers, benchmark, output_path, data_csv_dir):
+    '''Build a dividend-adjusted CSV dataset for backtesting.
 
-    tickers = ["AAPL", "MSFT"]
-    df = df[df['ticker'].isin(tickers)]
+    Loads all CSV files from data_csv_dir, filters to the requested tickers
+    and benchmark, fetches and applies dividend and split adjustments, then
+    saves the result to output_path.
 
+    Parameters
+    ----------
+    tickers : list of str
+        Tickers for the strategy universe.
+    benchmark : str
+        Benchmark ticker to include (e.g. 'SPY').
+    output_path : str or Path
+        Destination path for the output CSV file.
+    data_csv_dir : str or Path
+        Directory containing the source daily CSV files.
+    '''
+    # Load all data
+    df = load_all_csv_files(data_csv_dir)
+
+    # Combine tickers and benchmark
+    all_tickers = tickers + [benchmark]
     print(df)
-    dividends_df = get_dividends_data(tickers)
-    splits_df = get_splits_data(tickers)
+    df = df[df['ticker'].isin(all_tickers)]
 
+    # Apply adjustments
+    dividends_df = get_dividends_data(all_tickers)
+    splits_df = get_splits_data(all_tickers)
     dividends_df = adjust_dividends_for_splits(dividends_df, splits_df)
     df = apply_dividend_adjustment(df, dividends_df)
 
-    df.to_csv("AAPL_MSFT.csv", index=False)
+    # Save
+    df.to_csv(output_path, index=False)
+    print(f'Data saved to {output_path}')
+    print(f'Tickers: {', '.join(all_tickers)}')
+    print(f'Total rows: {len(df)}')
+
+
+if __name__ == '__main__':
+    DATA_PATH = ROOT_DIR / 'data' / DATA_CSV_DIR
+
+    OUTPUT_PATH = ROOT_DIR / \
+        'portfolio_management' / 'tests' / 'test_data' / 'AAPL_MSFT_SPY.csv'
+
+    create_backtest_data(
+        tickers=['AAPL', 'MSFT'],
+        benchmark='SPY',
+        output_path=OUTPUT_PATH,
+        data_csv_dir=DATA_PATH
+    )

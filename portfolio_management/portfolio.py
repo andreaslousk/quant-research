@@ -1,16 +1,17 @@
 # autopep8: off
 import sys
-import numpy as np
-
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from pathlib import Path
+import numpy as np
 
-sys.path.append(str(Path(__file__).parent.parent.parent))  # root directory
+ROOT_DIR = Path.home() / 'quant_research'
+sys.path.insert(0, str(ROOT_DIR))
 
 # isort: split
-from portfolio_management.trade import PositionSide, Trade, TradeAction, PositionAdjustment
+from portfolio_management.trade import (PositionAdjustment, PositionSide,
+                                        Trade, TradeAction)
 
 # autopep8: on
 
@@ -18,6 +19,15 @@ from portfolio_management.trade import PositionSide, Trade, TradeAction, Positio
 class Portfolio:
     def __init__(self, initial_cash: float,
                  target_gmv: Optional[float] = None):
+        '''Initialise the portfolio with a starting cash balance.
+
+        Parameters
+        ----------
+        initial_cash : float
+            Starting cash balance.
+        target_gmv : float, optional
+            Target gross market value cap used for position sizing.
+        '''
         self.cash = initial_cash
         self.initial_cash = initial_cash
         self.target_gmv = target_gmv
@@ -30,6 +40,18 @@ class Portfolio:
         self.nav_history = []
 
     def get_current_gmv(self, current_prices: Dict[str, float]) -> float:
+        '''Return the total gross market value of all open positions.
+
+        Parameters
+        ----------
+        current_prices : dict of str -> float
+            Current price for each ticker.
+
+        Returns
+        -------
+        float
+            Sum of absolute notional values across all open positions.
+        '''
         gmv = 0
         for ticker, trade in self.open_trades.items():
             price = current_prices.get(ticker, trade.entry_price)
@@ -38,7 +60,19 @@ class Portfolio:
 
     def get_position_gmv(
             self, current_prices: Dict[str, float]) -> Dict[str, float]:
-        """Get current GMV for each open position"""
+        '''Return the current gross market value for each open position.
+
+        Parameters
+        ----------
+        current_prices : dict of str -> float
+            Current price for each ticker.
+
+        Returns
+        -------
+        dict of str -> float
+            Mapping of ticker -> absolute notional value for open positions
+            present in current_prices.
+        '''
         return {
             ticker: abs(trade.shares * current_prices[ticker])
             for ticker, trade in self.open_trades.items()
@@ -46,6 +80,20 @@ class Portfolio:
         }
 
     def get_nmv(self, current_prices: Dict[str, float]) -> float:
+        '''Return the net market value of all open positions.
+
+        Long positions contribute positively, short positions negatively.
+
+        Parameters
+        ----------
+        current_prices : dict of str -> float
+            Current price for each ticker.
+
+        Returns
+        -------
+        float
+            Signed net market value.
+        '''
         nmv = 0
         for ticker, trade in self.open_trades.items():
             price = current_prices.get(ticker, trade.entry_price)
@@ -54,6 +102,21 @@ class Portfolio:
 
     def _open_position(self, ticker: str, side: PositionSide,
                        shares: float, price: float, date: datetime):
+        '''Open a new position and deduct its cost from cash.
+
+        Parameters
+        ----------
+        ticker : str
+            Ticker symbol.
+        side : PositionSide
+            LONG or SHORT.
+        shares : float
+            Number of shares to buy/sell short.
+        price : float
+            Execution price per share.
+        date : datetime
+            Trade date.
+        '''
         assert self.cash - shares * price * \
             side.value >= 0, 'You cannot open a position that results in negative cash'
 
@@ -84,6 +147,19 @@ class Portfolio:
 
     def _add_to_position(
             self, ticker: str, target_shares: float, price: float, date: datetime):
+        '''Increase an existing position and update the weighted average entry price.
+
+        Parameters
+        ----------
+        ticker : str
+            Ticker symbol.
+        target_shares : float
+            Desired final share count (must exceed the current position size).
+        price : float
+            Execution price per share for the additional shares.
+        date : datetime
+            Trade date.
+        '''
         if ticker not in self.open_trades:
             return
 
@@ -91,9 +167,9 @@ class Portfolio:
         shares_delta = target_shares - trade.shares
 
         # Calculate new weighted average entry price
-        old_value = trade.shares * trade.entry_price
-        new_value = shares_delta * price
-        trade.entry_price = (old_value + new_value) / target_shares
+        existing_cost = trade.shares * trade.entry_price
+        additional_cost = shares_delta * price
+        trade.entry_price = (existing_cost + additional_cost) / target_shares
         trade.shares = target_shares
 
         # Track adjustment
@@ -110,7 +186,22 @@ class Portfolio:
 
     def _reduce_position(self, ticker: str, target_shares: float,
                          price: float, date: datetime):
-        """Reduce existing position (partial close/cover)"""
+        '''Partially close an existing position down to the target share count.
+
+        Creates a closed trade record for the exited portion and returns the
+        proceeds to cash.
+
+        Parameters
+        ----------
+        ticker : str
+            Ticker symbol.
+        target_shares : float
+            Desired remaining share count (must be less than the current position size).
+        price : float
+            Execution price per share.
+        date : datetime
+            Trade date.
+        '''
         if ticker not in self.open_trades:
             return
 
@@ -119,7 +210,7 @@ class Portfolio:
         shares_closed = abs(shares_delta)
 
         assert self.cash - shares_delta * price * \
-            trade.side.value >= 0, 'You cannot open a position that results in negative cash'
+            trade.side.value >= 0, 'You cannot reduce a position that results in negative cash'
 
         # Create a closed trade record for the partial exit
         partial_trade = Trade(
@@ -137,7 +228,7 @@ class Portfolio:
         # Update the open position
         trade.shares = target_shares
 
-        # Track adjustment - ADD THIS
+        # Track adjustment
         self.trade_history[ticker].append(PositionAdjustment(
             date=date,
             action=TradeAction.CLOSE,
@@ -151,7 +242,19 @@ class Portfolio:
 
     def _close_position(self, ticker: str, price: float, date: datetime,
                         action: TradeAction = TradeAction.CLOSE):
-        """Close existing position completely"""
+        '''Fully close an existing position and return the proceeds to cash.
+
+        Parameters
+        ----------
+        ticker : str
+            Ticker symbol.
+        price : float
+            Execution price per share.
+        date : datetime
+            Trade date.
+        action : TradeAction, optional
+            Action label to record on the trade (defaults to CLOSE).
+        '''
         if ticker not in self.open_trades:
             return
 
@@ -179,6 +282,21 @@ class Portfolio:
     def update_positions(self, target_weights: Dict[str, float],
                          prices: Dict[str, float],
                          date: datetime):
+        '''Reconcile current positions against target weights and execute required trades.
+
+        Performs a two-pass update: first closes or reduces positions to free up cash,
+        then opens or adds to positions.
+
+        Parameters
+        ----------
+        target_weights : dict of str -> float
+            Desired portfolio weights (positive = long, negative = short).
+            Weights are scaled against the effective GMV (min of target_gmv and NAV).
+        prices : dict of str -> float
+            Execution prices for each ticker.
+        date : datetime
+            Execution date applied to all trades.
+        '''
         total_weight = sum(abs(w) for w in target_weights.values())
 
         current_nav = self.get_portfolio_value(prices)
@@ -252,6 +370,15 @@ class Portfolio:
                     ticker, target_shares, prices[ticker], date)
 
     def record_nav(self, date: datetime, current_prices: Dict[str, float]):
+        '''Append the current NAV to nav_history.
+
+        Parameters
+        ----------
+        date : datetime
+            Snapshot date.
+        current_prices : dict of str -> float
+            Current price for each ticker used to value open positions.
+        '''
         current_nav = self.get_portfolio_value(current_prices)
 
         self.nav_history.append({
@@ -259,6 +386,13 @@ class Portfolio:
             'nav': current_nav})
 
     def record_cash(self, date: datetime):
+        '''Append the current cash balance to cash_history.
+
+        Parameters
+        ----------
+        date : datetime
+            Snapshot date.
+        '''
         self.cash_history.append({
             'date': date,
             'cash': self.cash
@@ -266,6 +400,19 @@ class Portfolio:
 
     def record_position(self, date: datetime,
                         tickers: List[str], prices: Dict[str, float]):
+        '''Append current share counts and prices for a list of tickers to position_history.
+
+        Tickers not currently held are recorded with 0 shares.
+
+        Parameters
+        ----------
+        date : datetime
+            Snapshot date.
+        tickers : list of str
+            Tickers to record.
+        prices : dict of str -> float
+            Current price for each ticker.
+        '''
         for ticker in tickers:
             shares = self.open_trades[ticker].shares * \
                 self.open_trades[ticker].side.value if ticker in self.open_trades else 0
@@ -277,9 +424,24 @@ class Portfolio:
             })
 
     def get_latest_cash(self):
+        '''Return the current cash balance.'''
         return self.cash
 
     def get_latest_positions(self, tickers: List[str]) -> Dict[str, float]:
+        '''Return signed share counts for a list of tickers.
+
+        Long positions are positive, short positions are negative, flat positions are 0.
+
+        Parameters
+        ----------
+        tickers : list of str
+            Tickers to query.
+
+        Returns
+        -------
+        dict of str -> float
+            Signed share count per ticker.
+        '''
         return {
             ticker: self.open_trades[ticker].shares *
             self.open_trades[ticker].side.value
@@ -288,6 +450,18 @@ class Portfolio:
         }
 
     def get_open_pnl(self, current_prices: Dict[str, float]) -> float:
+        '''Return the total unrealised PnL across all open positions.
+
+        Parameters
+        ----------
+        current_prices : dict of str -> float
+            Current price for each ticker.
+
+        Returns
+        -------
+        float
+            Sum of unrealised PnL for all open trades.
+        '''
         pnl = 0
         for ticker, trade in self.open_trades.items():
             if ticker in current_prices:
@@ -296,7 +470,18 @@ class Portfolio:
         return pnl
 
     def get_portfolio_value(self, current_prices: Dict[str, float]) -> float:
-        """Total portfolio value (NAV)"""
+        '''Return the total portfolio value (NAV): cash plus marked-to-market position value.
+
+        Parameters
+        ----------
+        current_prices : dict of str -> float
+            Current price for each ticker.
+
+        Returns
+        -------
+        float
+            Net asset value.
+        '''
         # Calculate market value of all positions
         position_value = 0
         for ticker, trade in self.open_trades.items():
@@ -309,18 +494,28 @@ class Portfolio:
         return nav
 
     def get_portfolio_summary(self, current_prices: Dict[str, float]) -> Dict:
-        total_trades = 0
+        '''Return a summary dict of key portfolio performance metrics.
 
-        volumes = []
+        Includes PnL, NAV, returns, Sharpe ratio, max drawdown, and turnover statistics.
+
+        Parameters
+        ----------
+        current_prices : dict of str -> float
+            Current prices used to mark open positions to market.
+
+        Returns
+        -------
+        dict
+            Keys: 'pnl', 'final_nav', 'return', 'annual_return', 'max_dd',
+            'max_dd_start', 'max_dd_end', 'max_dd_duration', 'volume_trade',
+            'return_per_trade', 'mean_return', 'std_return', 'sharpe'.
+        '''
         tot_volume = 0
 
         for ticker in self.trade_history.keys():
-            total_trades += len(self.trade_history[ticker])
-
             ticker_volume = 0
             for trade in self.trade_history[ticker]:
                 ticker_volume += abs(trade.shares_delta * trade.price)
-            volumes.append({'ticker': ticker, 'volume': ticker_volume})
             tot_volume += ticker_volume
 
         pnl = self.get_open_pnl(current_prices)
@@ -336,6 +531,11 @@ class Portfolio:
         mean_return = np.mean(daily_return)
         std_return = np.std(daily_return)
 
+        # Calculate annual return
+        total_trading_days = len(nav_history)
+        annual_return = (1 + pnl / self.initial_cash) ** (252 /
+                                                          total_trading_days) - 1 if total_trading_days > 0 else 0
+
         max_dd_dict = self._calculate_max_drawdown(
             self.nav_history)
 
@@ -343,6 +543,7 @@ class Portfolio:
             'pnl': pnl,
             'final_nav': self.nav_history[-1]['nav'],
             'return': pnl / self.initial_cash,
+            'annual_return': annual_return,
             'max_dd': max_dd_dict['max_drawdown'],
             'max_dd_start': max_dd_dict['start_date'],
             'max_dd_end': max_dd_dict['end_date'],
@@ -355,6 +556,19 @@ class Portfolio:
         }
 
     def _calculate_max_drawdown(self, daily_nav: List[Dict]) -> Dict:
+        '''Calculate the maximum drawdown from a NAV history list.
+
+        Parameters
+        ----------
+        daily_nav : list of dict
+            Each element must contain 'nav' (float) and 'date' keys.
+
+        Returns
+        -------
+        dict
+            Keys: 'max_drawdown' (float fraction), 'start_date', 'end_date',
+            'duration_days' (int).
+        '''
         nav_series = np.array([d['nav'] for d in daily_nav])
         dates = [d['date'] for d in daily_nav]
 
@@ -380,6 +594,20 @@ class Portfolio:
 
     def get_position_details(
             self, current_prices: Dict[str, float]) -> List[Dict]:
+        '''Return a list of dicts describing each open position.
+
+        Each dict contains: 'ticker', 'shares' (signed), 'cost_basis',
+        'current_price', 'notional', 'pnl' (unrealised), and 'return'.
+
+        Parameters
+        ----------
+        current_prices : dict of str -> float
+            Current price for each ticker.
+
+        Returns
+        -------
+        list of dict
+        '''
         positions = []
         for ticker, trade in self.open_trades.items():
             current_price = current_prices.get(ticker, trade.entry_price)
@@ -399,4 +627,17 @@ class Portfolio:
         return positions
 
     def get_position_history(self, ticker: str) -> List[PositionAdjustment]:
+        '''Return the list of PositionAdjustment records for a ticker.
+
+        Parameters
+        ----------
+        ticker : str
+            Ticker symbol.
+
+        Returns
+        -------
+        list of PositionAdjustment
+            All adjustments for the ticker in chronological order,
+            or an empty list if no history exists.
+        '''
         return self.trade_history.get(ticker, [])

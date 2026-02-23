@@ -7,11 +7,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.append(str(Path(__file__).parent.parent.parent))  # root directory
+ROOT_DIR = Path.home() / 'quant_research'
+sys.path.insert(0, str(ROOT_DIR))
 
 # isort: split
 from data import data_processor
-
 from portfolio_management.momentum_strategy import MomentumStrategy
 from portfolio_management.portfolio import Portfolio
 from portfolio_management.trading_system import TradingSystem
@@ -115,6 +115,12 @@ def trading_system_market_returns(
 
 def test_backtesting_positive_returns(
         trading_system_positive_returns, positive_return_data, aapl_data_path, msft_data_path, tolerance=1e-4):
+    '''Verify that the backtest return matches the analytically expected return.
+
+    Computes the expected return from known asset returns and initial share
+    allocations (accounting for integer rounding), then asserts agreement
+    with the backtest result within tolerance.
+    '''
     backtest_res = trading_system_positive_returns.run_backtest(
         positive_return_data)
 
@@ -172,6 +178,7 @@ def test_backtesting_positive_returns(
 
 def test_nav_reconciliation(
         trading_system_market_returns, market_return_data, tolerance=1e-4):
+    '''Verify that the reported final NAV equals cash plus the sum of individual position values.'''
     backtest_res = trading_system_market_returns.run_backtest(
         market_return_data)
 
@@ -194,6 +201,7 @@ def test_nav_reconciliation(
 
 def test_pnl_equals_nav_change(
         trading_system_market_returns, market_return_data, tolerance=1e-4):
+    '''Verify that total PnL equals the change in NAV from start to end of the backtest.'''
     backtest_res = trading_system_market_returns.run_backtest(
         market_return_data)
 
