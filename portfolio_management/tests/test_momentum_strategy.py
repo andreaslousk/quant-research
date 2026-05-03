@@ -10,7 +10,7 @@ ROOT_DIR = Path.home() / 'quant_research'
 sys.path.insert(0, str(ROOT_DIR))
 
 # isort: split
-from data import data_processor
+from portfolio_management.data import data_processor
 from portfolio_management.momentum_strategy import MomentumStrategy
 
 # autopep8: on
