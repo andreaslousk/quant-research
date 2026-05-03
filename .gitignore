@@ -3,3 +3,13 @@ __pycache__/
 *.pyc
 sandbox.ipynb
 .vscode/
+
+# data
+futures/data/ES/
+futures/data/NQ_RTY_YM/
+futures/data/6E/
+portfolio_management/data/data_csv/
+portfolio_management/data/data_gz/
+
+# generated outputs
+futures/research/extreme_moves.csv

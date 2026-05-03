@@ -12,7 +12,7 @@ ROOT_DIR = Path.home() / 'quant_research'
 sys.path.insert(0, str(ROOT_DIR))
 
 # isort: split
-from data import data_processor
+from portfolio_management.data import data_processor
 from portfolio_management.portfolio import Portfolio
 from portfolio_management.trading_system import TradingSystem
 
