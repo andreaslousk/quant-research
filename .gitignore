@@ -1,13 +1,28 @@
 .DS_Store
 __pycache__/
 *.pyc
-sandbox.ipynb
 .vscode/
+futures/research/.cache/
 
-# data
-futures/data/ES/
-futures/data/NQ_RTY_YM/
+# notebooks (scratch/research; reusable logic lives in the .py modules instead)
+*.ipynb
+.ipynb_checkpoints/
+
+# data (Databento-sourced -- not ours to publish)
 futures/data/6E/
+futures/data/CL/
+futures/data/ES/
+futures/data/GC/
+futures/data/HG/
+futures/data/JKM/
+futures/data/LNE/
+futures/data/NG/
+futures/data/NQ/
+futures/data/RTY/
+futures/data/YM/
+futures/data/ZC/
+futures/data/ZS/
+futures/data/ZW/
 portfolio_management/data/data_csv/
 portfolio_management/data/data_gz/
 
