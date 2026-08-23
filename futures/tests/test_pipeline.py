@@ -145,6 +145,7 @@ def test_intraday_return_known_value():
     bars = pd.DataFrame({
         'dt_ny' : pd.to_datetime(['2013-01-02 09:30', '2013-01-02 16:00']).tz_localize(tz),
         'symbol': 'ESH3',
+        'open'  : [100.0, 104.0],
         'close' : [100.0, 105.0],
         'date'  : date,
     })
@@ -163,6 +164,7 @@ def test_overnight_return_known_value():
             '2013-01-03 09:30', '2013-01-03 16:00',
         ]).tz_localize(tz),
         'symbol': 'ESH3',
+        'open'  : [100.0, 100.0, 103.0, 103.0],
         'close' : [100.0, 100.0, 103.0, 103.0],
         'date'  : [date1, date1, date2, date2],
     })

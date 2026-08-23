@@ -8,12 +8,15 @@ All functions accept a results_dir parameter — callers control where output is
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
-from data.config import START_DATE, END_DATE, INSTRUMENTS, FX_INSTRUMENTS
+from data.config import (
+    START_DATE, END_DATE, EQUITIES, FX, COMMODITIES, INSTRUMENT_CALENDARS,
+    SESSION_OPEN, SESSION_CLOSE, COMMODITY_SESSION_CLOSE,
+)
 from data.data_loader import load_ohlcv, get_all_sessions, get_front_month_daily
 from data.data_processor import (
     build_continuous_series, get_ohlcv_resampled, compute_bar_returns,
     get_profile_volume, get_volume_acceleration_profile, get_profile_summary,
-    get_session_returns, build_instrument_data,
+    get_session_returns, build_instrument_data, infer_session_open,
 )
 
 _BASE_RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
@@ -125,15 +128,19 @@ def plot_session_profiles_vol_accel(
     vol_accel: pd.Series,
     results_dir: str = _BASE_RESULTS_DIR,
     instrument: str = '',
+    session_open: object = SESSION_OPEN,
+    session_close: object = SESSION_CLOSE,
 ) -> None:
     '''Save return + volume acceleration profile charts split by intraday and overnight session.'''
     os.makedirs(results_dir, exist_ok=True)
-    intraday_mask = (summary.index >= '09:30') & (summary.index < '16:00')
+    open_str      = session_open.strftime('%H:%M')
+    close_str     = session_close.strftime('%H:%M')
+    intraday_mask = (summary.index >= open_str) & (summary.index < close_str)
     prefix        = f'{instrument} | ' if instrument else ''
 
     for mask, label, filename in [
-        (intraday_mask,  f'{prefix}Intraday Session — Return & Vol Accel (09:30–16:00)', 'session_profile_vol_accel_intraday'),
-        (~intraday_mask, f'{prefix}Overnight Session — Return & Vol Accel',              'session_profile_vol_accel_overnight'),
+        (intraday_mask,  f'{prefix}Intraday Session — Return & Vol Accel ({open_str}–{close_str})', 'session_profile_vol_accel_intraday'),
+        (~intraday_mask, f'{prefix}Overnight Session — Return & Vol Accel',                         'session_profile_vol_accel_overnight'),
     ]:
         _plot_profile_vol_accel(
             summary[mask],
@@ -143,15 +150,23 @@ def plot_session_profiles_vol_accel(
         )
 
 
-def plot_session_profiles(summary: pd.DataFrame, results_dir: str = _BASE_RESULTS_DIR, instrument: str = '') -> None:
+def plot_session_profiles(
+    summary: pd.DataFrame,
+    results_dir: str = _BASE_RESULTS_DIR,
+    instrument: str = '',
+    session_open: object = SESSION_OPEN,
+    session_close: object = SESSION_CLOSE,
+) -> None:
     '''Save separate return+volume profile charts for intraday and overnight sessions.'''
     os.makedirs(results_dir, exist_ok=True)
-    intraday_mask = (summary.index >= '09:30') & (summary.index < '16:00')
+    open_str      = session_open.strftime('%H:%M')
+    close_str     = session_close.strftime('%H:%M')
+    intraday_mask = (summary.index >= open_str) & (summary.index < close_str)
     prefix        = f'{instrument} | ' if instrument else ''
 
     for mask, label, filename in [
-        (intraday_mask,  f'{prefix}Intraday Session Profile (09:30–16:00)',  'session_profile_intraday'),
-        (~intraday_mask, f'{prefix}Overnight Session Profile',               'session_profile_overnight'),
+        (intraday_mask,  f'{prefix}Intraday Session Profile ({open_str}–{close_str})', 'session_profile_intraday'),
+        (~intraday_mask, f'{prefix}Overnight Session Profile',                          'session_profile_overnight'),
     ]:
         session_summary = summary[mask]
         _plot_profile(session_summary, label, os.path.join(results_dir, filename + '.png'))
@@ -268,9 +283,9 @@ def plot_intraday_profile_comparison(
     one for avg volume, one for cumulative return.
     '''
     os.makedirs(results_dir, exist_ok=True)
-    colors = ['#2c3e50', '#e74c3c', '#3498db', '#2ecc71', '#9b59b6']
+    colors = ['#2c3e50', '#e74c3c', '#3498db', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c']
     instruments = list(summaries_by_instrument.keys())
-    index       = list(summaries_by_instrument[instruments[0]].index)
+    index       = sorted(set().union(*[summaries_by_instrument[i].index for i in instruments]))
     n           = len(index)
     bar_width   = 0.8 / len(instruments)
     x           = range(n)
@@ -284,7 +299,7 @@ def plot_intraday_profile_comparison(
         _, ax = plt.subplots(figsize=(18, 6))
         csv_data = {}
         for i, (instrument, color) in enumerate(zip(instruments, colors)):
-            summary = summaries_by_instrument[instrument]
+            summary = summaries_by_instrument[instrument].reindex(index)
             if metric == 'avg_volume_pct':
                 values = summary['avg_volume'] / summary['avg_volume'].sum() * 100
             else:
@@ -313,9 +328,15 @@ def plot_intraday_profile_comparison(
             print(f'Saved: {csv_path}')
 
 
-def _split_session_volume(summary: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
-    '''Split avg_volume into intraday (09:30–16:00) and overnight buckets, each as % of its session total.'''
-    intraday_mask = (summary.index >= '09:30') & (summary.index < '16:00')
+def _split_session_volume(
+    summary: pd.DataFrame,
+    session_open: object = SESSION_OPEN,
+    session_close: object = SESSION_CLOSE,
+) -> tuple[pd.Series, pd.Series]:
+    '''Split avg_volume into intraday and overnight buckets, each as % of its session total.'''
+    open_str      = session_open.strftime('%H:%M')
+    close_str     = session_close.strftime('%H:%M')
+    intraday_mask = (summary.index >= open_str) & (summary.index < close_str)
     intraday_vol  = summary.loc[intraday_mask,  'avg_volume']
     overnight_vol = summary.loc[~intraday_mask, 'avg_volume']
     return intraday_vol / intraday_vol.sum() * 100, overnight_vol / overnight_vol.sum() * 100
@@ -325,10 +346,12 @@ def plot_session_volume_profiles(
     summary: pd.DataFrame,
     instrument: str,
     results_dir: str = _BASE_RESULTS_DIR,
+    session_open: object = SESSION_OPEN,
+    session_close: object = SESSION_CLOSE,
 ) -> None:
     '''Save intraday and overnight volume % charts for a single instrument.'''
     os.makedirs(results_dir, exist_ok=True)
-    intraday_vol, overnight_vol = _split_session_volume(summary)
+    intraday_vol, overnight_vol = _split_session_volume(summary, session_open, session_close)
 
     for vol, label, filename in [
         (intraday_vol,  f'{instrument} Intraday Volume (% of session)',  'volume_intraday_pct'),
@@ -353,7 +376,7 @@ def plot_session_volume_profiles_comparison(
 ) -> None:
     '''Save intraday and overnight volume % comparison charts across all instruments.'''
     os.makedirs(results_dir, exist_ok=True)
-    colors      = ['#2c3e50', '#e74c3c', '#3498db', '#2ecc71', '#9b59b6']
+    colors      = ['#2c3e50', '#e74c3c', '#3498db', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c']
     instruments = list(summaries_by_instrument.keys())
     bar_width   = 0.8 / len(instruments)
 
@@ -366,12 +389,12 @@ def plot_session_volume_profiles_comparison(
             intraday_vol, overnight_vol = _split_session_volume(summaries_by_instrument[instrument])
             vols[instrument] = intraday_vol if session == 'intraday' else overnight_vol
 
-        index = list(vols[instruments[0]].index)
+        index = sorted(set().union(*[v.index for v in vols.values()]))
         x     = range(len(index))
         _, ax = plt.subplots(figsize=(18, 5))
         for i, (instrument, color) in enumerate(zip(instruments, colors)):
             offsets = [xi + i * bar_width - (len(instruments) - 1) * bar_width / 2 for xi in x]
-            ax.bar(offsets, vols[instrument].values, width=bar_width, label=instrument, color=color, alpha=0.8)
+            ax.bar(offsets, vols[instrument].reindex(index).values, width=bar_width, label=instrument, color=color, alpha=0.8)
         ax.set_xticks(list(x))
         ax.set_xticklabels(index, rotation=45)
         ax.set_ylabel('% of Session Volume')
@@ -395,7 +418,7 @@ def plot_session_profile_comparison(
     Bottom panel: grouped avg volume % bars + cumulative volume % lines (twin axis).
     '''
     os.makedirs(results_dir, exist_ok=True)
-    colors      = ['#2c3e50', '#e74c3c', '#3498db', '#2ecc71', '#9b59b6']
+    colors      = ['#2c3e50', '#e74c3c', '#3498db', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c']
     instruments = list(summaries_by_instrument.keys())
     bar_width   = 0.8 / len(instruments)
 
@@ -418,13 +441,13 @@ def plot_session_profile_comparison(
                 mask = ~((summary.index >= '09:30') & (summary.index < '16:00'))
                 slices[instrument] = summary[mask]
 
-        sess_index    = list(slices[instruments[0]].index)
+        sess_index    = sorted(set().union(*[slices[i].index for i in instruments]))
         n             = len(sess_index)
         x             = range(n)
         _, (ax1, ax2) = plt.subplots(2, 1, figsize=(18, 10), sharex=True)
 
         for i, (instrument, color) in enumerate(zip(instruments, colors)):
-            sess    = slices[instrument]
+            sess    = slices[instrument].reindex(sess_index)
             offsets = [xi + i * bar_width - (len(instruments) - 1) * bar_width / 2 for xi in x]
             cum_ret = sess['cum_return'] * 100
             vol_pct = sess['avg_volume'] / sess['avg_volume'].sum() * 100
@@ -470,45 +493,81 @@ def plot_session_profiles_for(
     plot_session_profile_comparison({k: v['summary'] for k, v in data.items()}, results_dir)
 
 
+def run_by_category(
+    categories: dict[str, list[str]],
+    start_date: str = START_DATE,
+    end_date: str = END_DATE,
+    freq: str = '30min',
+    results_dir: str = _BASE_RESULTS_DIR,
+) -> None:
+    '''
+    Run full analysis organised by category.
+    Per-instrument plots go to results/<symbol>/.
+    Group comparison plots go to results/<category>/.
+    categories: e.g. {'equities': EQUITIES, 'fx': FX, 'commodities': COMMODITIES}
+    '''
+    for category, instruments in categories.items():
+        overnight_by_instrument = {}
+        intraday_by_instrument  = {}
+        summaries_by_instrument = {}
+
+        for instrument in instruments:
+            print(f'\n── {instrument} ──────────────────────────────────────')
+            instr_dir = os.path.join(results_dir, instrument)
+            calendar  = INSTRUMENT_CALENDARS.get(instrument, 'NYSE')
+
+            ohlcv = load_ohlcv(start_date, end_date, [instrument], verbose=True)
+
+            if instrument in COMMODITIES:
+                session_open  = infer_session_open(ohlcv, freq=freq)
+                session_close = COMMODITY_SESSION_CLOSE
+                print(f'Inferred session open: {session_open.strftime("%H:%M")} | close: {session_close.strftime("%H:%M")}')
+            else:
+                session_open  = SESSION_OPEN
+                session_close = SESSION_CLOSE
+
+            front_months = get_front_month_daily(ohlcv, calendar=calendar, verbose=True)
+            continuous   = build_continuous_series(ohlcv, front_months)
+
+            bars      = get_ohlcv_resampled(continuous, freq=freq)
+            bars      = compute_bar_returns(bars)
+            vol       = get_profile_volume(continuous, freq=freq)
+            summary   = get_profile_summary(bars, vol)
+            vol_accel = get_volume_acceleration_profile(continuous, freq=freq)
+
+            plot_intraday_profile(summary, bars, instr_dir, instrument)
+            plot_intraday_profile_vol_accel(summary, vol_accel, bars, instr_dir, instrument)
+            plot_session_profiles_vol_accel(summary, vol_accel, instr_dir, instrument, session_open, session_close)
+            plot_session_profiles(summary, instr_dir, instrument, session_open, session_close)
+            plot_session_volume_profiles(summary, instrument, instr_dir, session_open, session_close)
+
+            intraday_sessions, _ = get_all_sessions(
+                continuous, calendar=calendar,
+                session_open=session_open, session_close=session_close,
+            )
+            intraday_ret, overnight_ret = get_session_returns(intraday_sessions)
+            plot_session_return_distributions(intraday_ret, overnight_ret, instr_dir)
+            plot_cumulative_returns(intraday_ret, overnight_ret, instr_dir)
+
+            overnight_by_instrument[instrument] = overnight_ret
+            intraday_by_instrument[instrument]  = intraday_ret
+            summaries_by_instrument[instrument] = summary
+
+        if len(instruments) > 1:
+            print(f'\n── {category} comparison ─────────────────────────────────')
+            group_dir = os.path.join(results_dir, category)
+            plot_cumulative_returns_comparison(overnight_by_instrument, intraday_by_instrument, group_dir)
+            plot_intraday_profile_comparison(summaries_by_instrument, group_dir)
+            plot_session_volume_profiles_comparison(summaries_by_instrument, group_dir)
+            plot_session_profile_comparison(summaries_by_instrument, group_dir)
+
+
 def main() -> None:
-
-    overnight_by_instrument = {}
-    intraday_by_instrument  = {}
-    summaries_by_instrument = {}
-
-    for instrument in INSTRUMENTS + FX_INSTRUMENTS:
-        print(f'\n── {instrument} ──────────────────────────────────────')
-        results_dir = os.path.join(_BASE_RESULTS_DIR, instrument)
-
-        ohlcv        = load_ohlcv(START_DATE, END_DATE, [instrument], verbose=True)
-        front_months = get_front_month_daily(ohlcv, verbose=True)
-        continuous   = build_continuous_series(ohlcv, front_months)
-
-        bars      = get_ohlcv_resampled(continuous, freq='30min')
-        bars      = compute_bar_returns(bars)
-        vol       = get_profile_volume(continuous, freq='30min')
-        summary   = get_profile_summary(bars, vol)
-        vol_accel = get_volume_acceleration_profile(continuous, freq='30min')
-        plot_intraday_profile(summary, bars, results_dir, instrument)
-        plot_intraday_profile_vol_accel(summary, vol_accel, bars, results_dir, instrument)
-        plot_session_profiles_vol_accel(summary, vol_accel, results_dir, instrument)
-        plot_session_profiles(summary, results_dir, instrument)
-        plot_session_volume_profiles(summary, instrument, results_dir)
-
-        intraday_sessions, _ = get_all_sessions(continuous)
-        intraday_ret, overnight_ret = get_session_returns(intraday_sessions)
-        plot_session_return_distributions(intraday_ret, overnight_ret, results_dir)
-        plot_cumulative_returns(intraday_ret, overnight_ret, results_dir)
-
-        overnight_by_instrument[instrument] = overnight_ret
-        intraday_by_instrument[instrument]  = intraday_ret
-        summaries_by_instrument[instrument] = summary
-
-    print('\n── Comparison charts ─────────────────────────────────')
-    plot_cumulative_returns_comparison(overnight_by_instrument, intraday_by_instrument)
-    plot_intraday_profile_comparison(summaries_by_instrument)
-    plot_session_volume_profiles_comparison(summaries_by_instrument)
-    plot_session_profile_comparison(summaries_by_instrument)
+    run_by_category({
+        'equities'   : EQUITIES,
+        'fx'         : FX,
+        'commodities': COMMODITIES,
+    })
 
 
 if __name__ == '__main__':

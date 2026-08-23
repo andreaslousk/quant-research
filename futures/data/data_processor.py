@@ -7,33 +7,57 @@ All functions take DataFrames and return DataFrames — no side effects.
 
 import pandas as pd
 from data.data_loader import load_ohlcv, get_front_month_daily, get_all_sessions
+from data.config import (
+    INSTRUMENT_CALENDARS, COMMODITIES,
+    SESSION_OPEN, SESSION_CLOSE, COMMODITY_SESSION_CLOSE,
+)
 
 
 def build_continuous_series(ohlcv: pd.DataFrame, front_months: pd.DataFrame) -> pd.DataFrame:
     '''
     Build a back-adjusted continuous front-month series.
-    Filters to front month, detects rolls, and applies a backward price adjustment
-    so that prices are seamless across contract changes.
-    Replaces open/high/low/close in-place with adjusted values — downstream
-    code always works with `close`, never `adj_close`.
+    Filters to the front month, detects rolls, and applies a multiplicative
+    back-adjustment anchored to the most recent contract (recent prices stay
+    unadjusted; historical prices are scaled) so the series is seamless across
+    rolls. Replaces open/high/low/close in place with adjusted values —
+    downstream code always works with `close`, never `adj_close`.
+
+    Cumulative returns of the result equal those of a held-and-rolled futures
+    position: in persistent contango (e.g. NG) the series bleeds — that carry is
+    real, not an artifact.
     '''
     df = ohlcv.copy()
     df['date'] = df['dt_ny'].dt.date
     df = df.merge(front_months, on='date', how='left')
-    df = df[df['symbol'] == df['front_month']].copy()
-    df = df.sort_values('dt_ny').reset_index(drop=True)
+    df = df[df['symbol'] == df['front_month']].sort_values('dt_ny').reset_index(drop=True)
 
     df['prev_symbol'] = df['symbol'].shift(1)
-    df['roll']        = df['symbol'] != df['prev_symbol']
+    df['prev_date']   = df['date'].shift(1)
+    df['roll']        = df['symbol'].notna() & df['prev_symbol'].notna() & (df['symbol'] != df['prev_symbol'])
 
-    df['adj_factor'] = 1.0
-    df.loc[df['roll'], 'adj_factor'] = df['close'].shift(1) / df['close']
-    df['cum_adj'] = df['adj_factor'].cumprod()
+    # Per-roll splice ratio new/old at the LAST minute on prev_date where BOTH
+    # contracts trade — same-instant prices, so only the contract spread is
+    # removed and no overnight move of either leg leaks into the series.
+    c     = ohlcv[['dt_ny', 'date', 'symbol', 'close']]
+    rolls = df.loc[df['roll'], ['prev_date', 'prev_symbol', 'symbol']].rename(
+        columns={'prev_symbol': 'old_sym', 'symbol': 'new_sym'})
+    old = (rolls.merge(c, left_on=['prev_date', 'old_sym'], right_on=['date', 'symbol'])
+                [['prev_date', 'dt_ny', 'close']].rename(columns={'close': 'close_o'}))
+    new = (rolls.merge(c, left_on=['prev_date', 'new_sym'], right_on=['date', 'symbol'])
+                [['prev_date', 'dt_ny', 'close']].rename(columns={'close': 'close_n'}))
+    shared = old.merge(new, on=['prev_date', 'dt_ny']).groupby('prev_date').last()
+    factor = shared['close_n'] / shared['close_o']
+
+    df['adj_factor'] = df['prev_date'].map(factor).where(df['roll']).fillna(1.0)
+    # Reverse cumprod anchored to the present, EXCLUDING each bar's own factor so
+    # the roll factor scales the old contract (bars before the roll), not the
+    # new contract's first bar.
+    df['cum_adj'] = df['adj_factor'][::-1].cumprod()[::-1] / df['adj_factor']
 
     for col in ['open', 'high', 'low', 'close']:
         df[col] = df[col] * df['cum_adj']
 
-    return df.drop(columns=['prev_symbol', 'roll', 'adj_factor', 'cum_adj', 'front_month'], errors='ignore')
+    return df.drop(columns=['prev_symbol', 'prev_date', 'roll', 'adj_factor', 'cum_adj', 'front_month'], errors='ignore')
 
 
 def get_ohlcv_resampled(continuous: pd.DataFrame, freq: str = '1h') -> pd.DataFrame:
@@ -95,7 +119,7 @@ def get_profile_volume(continuous: pd.DataFrame, freq: str = '1h') -> pd.DataFra
         .sum()
         .reset_index()
     )
-    return vol[vol['dt_ny'].dt.hour != 17].reset_index(drop=True)
+    return vol[vol['dt_ny'].dt.hour != 17].set_index('dt_ny')
 
 
 def get_volume_acceleration_profile(continuous: pd.DataFrame, freq: str = '1h') -> pd.Series:
@@ -126,15 +150,18 @@ def get_session_returns(intraday: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
       R_intraday  = C_t / O_t - 1        (open-to-close within session)
       R_overnight = O_t / C_{t-1} - 1   (prev session close to next open)
 
-    O_t = first bar close on date t, C_t = last bar close on date t.
+    O_t = first bar open on date t, C_t = last bar close on date t.
 
     Returns (intraday_returns, overnight_returns), each indexed by date
     with columns: open, close, return, day_of_week, session.
+    intraday_returns also carries `volume` (session total); overnight has no
+    volume — this function only sees intraday bars, so the overnight window's
+    volume is not available here.
     '''
     daily = (
         intraday.sort_values('dt_ny')
-        .groupby('date')['close']
-        .agg(open='first', close='last')
+        .groupby('date')
+        .agg(open=('open', 'first'), close=('close', 'last'), volume=('volume', 'sum'))
         .reset_index()
     )
     daily['day_of_week']    = pd.to_datetime(daily['date']).dt.day_name()
@@ -142,7 +169,7 @@ def get_session_returns(intraday: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
     daily['intraday_return']  = daily['close'] / daily['open'] - 1
     daily['overnight_return'] = daily['open'] / daily['close'].shift(1) - 1
 
-    intraday_ret = daily[['date', 'open', 'close', 'intraday_return', 'day_of_week']].copy()
+    intraday_ret = daily[['date', 'open', 'close', 'volume', 'intraday_return', 'day_of_week']].copy()
     intraday_ret = intraday_ret.rename(columns={'intraday_return': 'return'})
     intraday_ret['session'] = 'intraday'
 
@@ -205,13 +232,36 @@ def get_profile_summary(bars: pd.DataFrame, vol: pd.DataFrame) -> pd.DataFrame:
     )
     returns_summary.index.name = 'time'
 
-    vol_summary = vol.groupby(vol['dt_ny'].dt.strftime('%H:%M'))['volume'].agg(
+    vol_dt          = vol.index.get_level_values('dt_ny')
+    vol_time_of_day = vol_dt.strftime('%H:%M')
+
+    vol_summary = vol.groupby(vol_time_of_day)['volume'].agg(
         avg_volume='mean',
         cum_volume='sum',
     )
     vol_summary.index.name = 'time'
 
     return returns_summary.join(vol_summary)
+
+
+def infer_session_open(ohlcv: pd.DataFrame, freq: str = '30min', threshold: float = 0.10) -> object:
+    '''
+    Infer the effective session open from the cumulative volume profile.
+    Computes average volume per time slot across all days, then returns the first
+    slot whose cumulative share of total daily volume reaches `threshold`.
+    Falls back to SESSION_OPEN if the threshold is never reached.
+    '''
+    vol = (
+        ohlcv[ohlcv['dt_ny'].dt.hour != 17]
+        .set_index('dt_ny')['volume']
+        .resample(freq)
+        .sum()
+        .reset_index()
+    )
+    avg     = vol.groupby(vol['dt_ny'].dt.strftime('%H:%M'))['volume'].mean().sort_index()
+    cum_pct = avg.cumsum() / avg.sum()
+    above   = cum_pct[cum_pct >= threshold]
+    return pd.Timestamp(above.index[0]).time() if not above.empty else SESSION_OPEN
 
 
 def build_instrument_data(
@@ -223,24 +273,39 @@ def build_instrument_data(
 ) -> dict:
     '''
     Full pipeline for a list of instruments.
+    Commodity instruments use an inferred session open and a fixed 16:30 close.
     Returns {instrument: {'summary', 'vol_accel', 'intraday_ret', 'overnight_ret'}}.
     '''
     results = {}
     for instrument in instruments:
-        ohlcv        = load_ohlcv(start_date, end_date, [instrument], verbose=verbose)
-        front_months = get_front_month_daily(ohlcv, verbose=verbose)
+        calendar  = INSTRUMENT_CALENDARS.get(instrument, 'NYSE')
+        ohlcv     = load_ohlcv(start_date, end_date, [instrument], verbose=verbose)
+
+        if instrument in COMMODITIES:
+            session_open  = infer_session_open(ohlcv, freq=freq)
+            session_close = COMMODITY_SESSION_CLOSE
+        else:
+            session_open  = SESSION_OPEN
+            session_close = SESSION_CLOSE
+
+        front_months = get_front_month_daily(ohlcv, calendar=calendar, verbose=verbose)
         continuous   = build_continuous_series(ohlcv, front_months)
         bars         = get_ohlcv_resampled(continuous, freq=freq)
         bars         = compute_bar_returns(bars)
         vol          = get_profile_volume(continuous, freq=freq)
 
-        intraday_sessions, _ = get_all_sessions(continuous)
+        intraday_sessions, _ = get_all_sessions(
+            continuous, calendar=calendar,
+            session_open=session_open, session_close=session_close,
+        )
         intraday_ret, overnight_ret = get_session_returns(intraday_sessions)
 
         results[instrument] = {
-            'summary'      : get_profile_summary(bars, vol),
-            'vol_accel'    : get_volume_acceleration_profile(continuous, freq=freq),
-            'intraday_ret' : intraday_ret,
-            'overnight_ret': overnight_ret,
+            'summary'       : get_profile_summary(bars, vol),
+            'vol_accel'     : get_volume_acceleration_profile(continuous, freq=freq),
+            'intraday_ret'  : intraday_ret,
+            'overnight_ret' : overnight_ret,
+            'session_open'  : session_open,
+            'session_close' : session_close,
         }
     return results
