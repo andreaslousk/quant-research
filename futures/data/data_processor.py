@@ -142,7 +142,7 @@ def get_volume_acceleration_profile(continuous: pd.DataFrame, freq: str = '1h') 
     return vol.groupby('time')['vol_accel'].mean().rename('avg_vol_accel')
 
 
-def get_session_returns(intraday: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def get_session_returns(intraday: pd.DataFrame, has_volume: bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
     '''
     Compute intraday and overnight returns from intraday session bars.
     Input must already be filtered to the front-month continuous series.
@@ -154,22 +154,22 @@ def get_session_returns(intraday: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
 
     Returns (intraday_returns, overnight_returns), each indexed by date
     with columns: open, close, return, day_of_week, session.
-    intraday_returns also carries `volume` (session total); overnight has no
-    volume — this function only sees intraday bars, so the overnight window's
-    volume is not available here.
+    intraday_returns also carries `volume` (session total) when `has_volume`
+    (true for OHLCV bars; set False for statistics-sourced bars with no per-bar
+    volume) — overnight never has volume, since this function only sees intraday
+    bars, so the overnight window's volume is not available here regardless.
     '''
-    daily = (
-        intraday.sort_values('dt_ny')
-        .groupby('date')
-        .agg(open=('open', 'first'), close=('close', 'last'), volume=('volume', 'sum'))
-        .reset_index()
-    )
+    agg = dict(open=('open', 'first'), close=('close', 'last'))
+    if has_volume:
+        agg['volume'] = ('volume', 'sum')
+    daily = intraday.sort_values('dt_ny').groupby('date').agg(**agg).reset_index()
     daily['day_of_week']    = pd.to_datetime(daily['date']).dt.day_name()
     daily                   = daily.sort_values('date')
     daily['intraday_return']  = daily['close'] / daily['open'] - 1
     daily['overnight_return'] = daily['open'] / daily['close'].shift(1) - 1
 
-    intraday_ret = daily[['date', 'open', 'close', 'volume', 'intraday_return', 'day_of_week']].copy()
+    intraday_cols = ['date', 'open', 'close'] + (['volume'] if has_volume else []) + ['intraday_return', 'day_of_week']
+    intraday_ret = daily[intraday_cols].copy()
     intraday_ret = intraday_ret.rename(columns={'intraday_return': 'return'})
     intraday_ret['session'] = 'intraday'
 

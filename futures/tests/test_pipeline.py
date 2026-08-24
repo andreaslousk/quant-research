@@ -149,7 +149,7 @@ def test_intraday_return_known_value():
         'close' : [100.0, 105.0],
         'date'  : date,
     })
-    intraday_ret, _ = get_session_returns(bars)
+    intraday_ret, _ = get_session_returns(bars, has_volume=False)
     assert abs(intraday_ret['return'].iloc[0] - 0.05) < 1e-10
 
 
@@ -168,7 +168,7 @@ def test_overnight_return_known_value():
         'close' : [100.0, 100.0, 103.0, 103.0],
         'date'  : [date1, date1, date2, date2],
     })
-    _, overnight_ret = get_session_returns(bars)
+    _, overnight_ret = get_session_returns(bars, has_volume=False)
     assert abs(overnight_ret['return'].iloc[0] - 0.03) < 1e-10
 
 
