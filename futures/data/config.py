@@ -9,7 +9,7 @@ Every other module imports from this file — nothing is hardcoded elsewhere.
 import os
 import pandas as pd
 
-_DATA_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ── Date range ────────────────────────────────────────────────────────────────
 START_DATE = "2013-01-01"
@@ -18,18 +18,12 @@ END_DATE   = "2026-01-01"
 # ── Instruments ───────────────────────────────────────────────────────────────
 # Root symbols to process. Used to filter contracts from mixed-instrument files.
 # ES lives in its own directory. NQ, RTY, YM share a directory.
-INSTRUMENTS    = ["ES", "NQ", "YM", "RTY"]
-FX_INSTRUMENTS = ["6E"]
+EQUITIES   = ["ES", "NQ", "YM", "RTY"]
+FX         = ["6E"]
+COMMODITIES = ["CL", "GC", "HG", "NG", "ZC", "ZS", "ZW"]
 
 # ── Data paths ────────────────────────────────────────────────────────────────
-# ES has its own folder. All other equity index futures share one folder.
-ES_OHLCV_DIR    = os.path.join(_DATA_DIR, "ES", "futures_ohlcv")
-ES_STATS_DIR    = os.path.join(_DATA_DIR, "ES", "futures_statistics")
-OTHER_OHLCV_DIR = os.path.join(_DATA_DIR, "NQ_RTY_YM", "futures_ohlcv")
-OTHER_STATS_DIR = os.path.join(_DATA_DIR, "NQ_RTY_YM", "futures_statistics")
-FX_OHLCV_DIRS   = {
-    '6E': os.path.join(_DATA_DIR, "6E", "futures_ohlcv"),
-}
+# Each instrument lives at: DATA_DIR/<symbol>/futures_ohlcv (and futures_statistics)
 
 # ── Price scaling ─────────────────────────────────────────────────────────────
 # Databento stores prices as fixed-point int64 with 1e-9 scale
@@ -44,11 +38,32 @@ TZ = "America/New_York"
 SESSION_OPEN  = pd.Timestamp("09:30").time()
 SESSION_CLOSE = pd.Timestamp("16:00").time()
 
-# ── Market calendar ───────────────────────────────────────────────────────────
-CALENDAR         = 'CME Globex Equity'   # used for session open/close times
-HOLIDAY_CALENDAR = 'CME_Equity'        # used for full holiday schedule
+# Commodity daily close anchored to the 14:30 ET energy settlement (NG/CL/HO),
+# not the end of the Globex session. Daily-close sampling keeps bars up to this
+# time (see _daily_spot / the notebook's _daily_contracts).
+COMMODITY_SESSION_CLOSE = pd.Timestamp("14:30").time()
+
+# ── Market calendars ──────────────────────────────────────────────────────────
+# Maps each instrument to its pandas_market_calendars calendar name.
+# Used to correctly classify trading vs non-trading days per instrument.
+INSTRUMENT_CALENDARS = {
+    'ES':  'NYSE',
+    'NQ':  'NYSE',
+    'YM':  'NYSE',
+    'RTY': 'NYSE',
+    '6E':  'CME_FX',
+    'CL':  'CL',
+    'GC':  'GC',
+    'HG':  'HG',
+    'NG':  'NG',
+    'ZC':  'CME_Agriculture',
+    'ZS':  'CME_Agriculture',
+    'ZW':  'CME_Agriculture',
+}
 
 # ── Statistics ────────────────────────────────────────────────────────────────
-# stat_type=3 is the official CME settlement price
+# stat_type=3 is the official CME settlement price (value in `price`);
+# stat_type=9 is open interest (value in `quantity`).
 # See: https://databento.com/docs/schemas-and-data-formats/statistics
-STAT_TYPE_SETTLEMENT = 3
+STAT_TYPE_SETTLEMENT    = 3
+STAT_TYPE_OPEN_INTEREST = 9

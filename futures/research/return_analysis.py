@@ -21,7 +21,7 @@ import argparse
 import numpy as np
 import pandas as pd
 
-from data.config import START_DATE, END_DATE, INSTRUMENTS, FX_INSTRUMENTS
+from data.config import START_DATE, END_DATE, EQUITIES, FX
 from data.data_loader import load_ohlcv, get_front_month_daily, get_all_sessions
 from data.data_processor import (
     build_continuous_series,
@@ -43,7 +43,7 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-ALL_INSTRUMENTS = args.instruments if args.instruments else INSTRUMENTS + FX_INSTRUMENTS
+ALL_INSTRUMENTS = args.instruments if args.instruments else EQUITIES + FX
 SAVE_RESULTS    = args.save
 
 # ── 1. Load data ───────────────────────────────────────────────────────────────
