@@ -147,9 +147,10 @@ def test_intraday_return_known_value():
         'symbol': 'ESH3',
         'open'  : [100.0, 104.0],
         'close' : [100.0, 105.0],
+        'volume': [0, 0],   # unused by this test; get_session_returns requires the column
         'date'  : date,
     })
-    intraday_ret, _ = get_session_returns(bars, has_volume=False)
+    intraday_ret, _ = get_session_returns(bars)
     assert abs(intraday_ret['return'].iloc[0] - 0.05) < 1e-10
 
 
@@ -166,9 +167,10 @@ def test_overnight_return_known_value():
         'symbol': 'ESH3',
         'open'  : [100.0, 100.0, 103.0, 103.0],
         'close' : [100.0, 100.0, 103.0, 103.0],
+        'volume': [0, 0, 0, 0],   # unused by this test; get_session_returns requires the column
         'date'  : [date1, date1, date2, date2],
     })
-    _, overnight_ret = get_session_returns(bars, has_volume=False)
+    _, overnight_ret = get_session_returns(bars)
     assert abs(overnight_ret['return'].iloc[0] - 0.03) < 1e-10
 
 
